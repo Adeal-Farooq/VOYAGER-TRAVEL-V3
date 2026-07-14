@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { SegmentStepData, SegmentStepOption, MapRouteGeometry, PlaceResult } from '../types'
-import { getSegmentStep, searchPlaces } from '../services/api'
+import type { CompleteJourneySegment, CompleteJourneyDestOption, SegmentStepOption, MapRouteGeometry, PlaceResult } from '../types'
+import { getCompleteJourney, searchPlaces } from '../services/api'
 import { getModeIcon, getModeLabel, formatDuration, formatRupees } from '../utils/helpers'
 
 const SEGMENT_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4898']
@@ -8,17 +8,6 @@ const MODE_COLORS: Record<string, string> = {
   walk: '#22c55e', cab: '#f97316', auto: '#eab308', bike: '#8b5cf6',
   bus_ordinary: '#3b82f6', bus_ac_vajra: '#60a5fa', metro: '#22c55e',
   train: '#a855f7', custom: '#f59e0b',
-}
-
-interface ColumnCard {
-  stageIdx: number
-  fromName: string
-  fromLat?: number
-  fromLng?: number
-  options: (SegmentStepOption & { _viaIndex?: number; _stopName?: string })[]
-  label: string
-  type: 'reach' | 'from' | 'direct'
-  selectedOption?: SegmentStepOption
 }
 
 interface SegmentPanelProps {
@@ -30,235 +19,105 @@ interface SegmentPanelProps {
   budget?: number
   onClose: () => void
   onGeometryChange: (geometry: MapRouteGeometry[]) => void
-  onSizeChange?: (width: number) => void
+}
+
+interface SelectionItem {
+  dest: CompleteJourneyDestOption
+  transport: SegmentStepOption
+  segIdx: number
 }
 
 export default function SegmentPanel({
   sourceLocation, destLocation, sourceName, destName,
-  groupSize, budget, onClose, onGeometryChange, onSizeChange,
+  groupSize, budget, onClose, onGeometryChange,
 }: SegmentPanelProps) {
-  const [segmentStep, setSegmentStep] = useState<SegmentStepData | null>(null)
-  const [segmentLoading, setSegmentLoading] = useState(false)
+  const [segments, setSegments] = useState<CompleteJourneySegment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selections, setSelections] = useState<SelectionItem[]>([])
   const [hoveredOption, setHoveredOption] = useState<SegmentStepOption | null>(null)
-  const [builtPath, setBuiltPath] = useState<SegmentStepOption[]>([])
-  const [columns, setColumns] = useState<ColumnCard[]>([])
-  const [currentFromName, setCurrentFromName] = useState(sourceName)
-  const [phase, setPhase] = useState<'init' | 'from' | 'direct'>('init')
-
   const [customInput, setCustomInput] = useState('')
   const [customSuggestions, setCustomSuggestions] = useState<PlaceResult[]>([])
   const [customLoading, setCustomLoading] = useState(false)
   const [showCustomInput, setShowCustomInput] = useState(false)
-  const [selectedColIndex, setSelectedColIndex] = useState<number | null>(null)
-  const [editingIndex, setEditingIndex] = useState<number | null>(null)
-  const columnsRef = useRef(columns)
-  columnsRef.current = columns
   const abortRef = useRef<AbortController | null>(null)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
 
-  const fetchStepFrom = useCallback(async (fromLat: number, fromLng: number, fromName: string) => {
-    setSegmentLoading(true)
-    setHoveredOption(null)
-    setPhase('init')
-    try {
-      const res = await getSegmentStep(
-        fromLat, fromLng, fromName,
-        destLocation[0], destLocation[1], destName,
-        groupSize, budget
-      )
-      if (res.step) setSegmentStep(res.step)
-    } catch { /* ignore */ }
-    setSegmentLoading(false)
-  }, [destLocation, destName, groupSize, budget])
-
-  const handleStartBuilding = useCallback(() => {
-    setBuiltPath([])
-    setColumns([])
-    setCurrentFromName(sourceName)
-    setSegmentStep(null)
-    setSelectedColIndex(null)
-    setPhase('init')
-    fetchStepFrom(sourceLocation[0], sourceLocation[1], sourceName)
-  }, [sourceLocation, sourceName, fetchStepFrom])
-
-  useEffect(() => { handleStartBuilding() }, [handleStartBuilding])
-
-  // Build columns from segmentStep
   useEffect(() => {
-    if (!segmentStep || segmentLoading || phase === 'from') return
-
-    const cols: ColumnCard[] = []
-
-    // Column 0: Direct options
-    if (segmentStep.direct_options.length > 0) {
-      cols.push({
-        stageIdx: 0,
-        fromName: currentFromName,
-        options: segmentStep.direct_options.map(o => ({ ...o, _stopName: destName })),
-        label: '🏁 Direct to Destination',
-        type: 'direct',
-      })
-    }
-
-    // Columns for each via stop: show reach options
-    segmentStep.via_stops.forEach((vs, si) => {
-      const segColor = si < SEGMENT_COLORS.length ? SEGMENT_COLORS[si] : '#94a3b8'
-      if (vs.reach_options.length > 0) {
-        cols.push({
-          stageIdx: si,
-          fromName: currentFromName,
-          options: vs.reach_options.map(o => ({ ...o, _viaIndex: si, _stopName: vs.stop.name })),
-          label: `🚏 ${vs.stop.type === 'metro' ? '🚇' : vs.stop.type === 'railway' ? '🚆' : '🚌'} ${vs.stop.name}`,
-          type: 'reach',
-        })
+    let cancelled = false
+    setLoading(true)
+    getCompleteJourney(
+      sourceLocation[0], sourceLocation[1], sourceName,
+      destLocation[0], destLocation[1], destName,
+      groupSize, budget
+    ).then(res => {
+      if (!cancelled && res.journey?.segments) {
+        setSegments(res.journey.segments)
       }
+    }).finally(() => {
+      if (!cancelled) setLoading(false)
     })
+    return () => { cancelled = true }
+  }, [sourceLocation, destLocation, sourceName, destName, groupSize, budget])
 
-    setColumns(cols)
-  }, [segmentStep, segmentLoading, phase, currentFromName])
+  const rootSegment = segments[0]
+  const activeSegments: { seg: CompleteJourneyDestOption[]; level: number; parentIdx: number | null }[] = []
 
-  // Phase 1: User picked a reach_option → show from_stop_options in a new column
-  const handlePickReach = useCallback((vi: number, opt: SegmentStepOption, fromStep: SegmentStepData) => {
-    const vs = fromStep.via_stops[vi]
-    setBuiltPath(prev => [...prev, opt])
-    setCurrentFromName(opt.to)
-    setHoveredOption(null)
-    setPhase('from')
+  // Build active segments based on selections
+  if (rootSegment) {
+    activeSegments.push({
+      seg: rootSegment.destinations,
+      level: 0,
+      parentIdx: null,
+    })
+  }
 
-    // Mark this option as selected in existing column
-    setColumns(prev => prev.map(c => {
-      if (c.stageIdx === vi && c.type === 'reach') {
-        return { ...c, selectedOption: opt }
-      }
-      return c
-    }))
-
-    // Add new column for from_stop_options
-    const newCol: ColumnCard = {
-      stageIdx: vi,
-      fromName: vs.stop.name,
-      fromLat: vs.stop.lat,
-      fromLng: vs.stop.lng,
-      options: vs.from_stop_options.map(o => ({ ...o, _stopName: destName })),
-      label: `🚀 From ${vs.stop.name}`,
-      type: 'from',
+  // Follow the chain of selections to determine which levels are visible
+  let currentDestinations: CompleteJourneyDestOption[] = rootSegment?.destinations || []
+  for (let i = 0; i < selections.length; i++) {
+    const sel = selections[i]
+    if (sel.dest?.next?.destinations?.length) {
+      activeSegments.push({
+        seg: sel.dest.next.destinations,
+        level: i + 1,
+        parentIdx: i,
+      })
+      currentDestinations = sel.dest.next.destinations
+    } else {
+      break
     }
-    setColumns(prev => [...prev, newCol])
-    setSelectedColIndex(columnsRef.current.length)
+  }
+
+  const handleSelect = useCallback((dest: CompleteJourneyDestOption, transport: SegmentStepOption, level: number) => {
+    setSelections(prev => {
+      const existing = prev.findIndex(s => s.segIdx === level)
+      const newSel: SelectionItem = { dest, transport, segIdx: level }
+      if (existing >= 0) {
+        const updated = prev.slice(0, existing + 1)
+        updated[existing] = newSel
+        return updated
+      }
+      return [...prev, newSel]
+    })
   }, [])
 
-  // Phase 2: User picked a from_option
-  const handlePickFrom = useCallback((opt: SegmentStepOption, colIdx: number) => {
-    setBuiltPath(prev => [...prev, opt])
+  const handleReset = useCallback(() => {
+    setSelections([])
     setHoveredOption(null)
-    setPhase('init')
+  }, [])
 
-    // Mark as selected
-    setColumns(prev => prev.map((c, i) => i === colIdx ? { ...c, selectedOption: opt } : c))
+  const builtPath: SegmentStepOption[] = selections.map(s => s.transport)
+  const totalFare = builtPath.reduce((s, o) => s + (o.fare || 0), 0)
+  const totalDuration = builtPath.reduce((s, o) => s + (o.duration_minutes || 0), 0)
+  const totalDistance = builtPath.reduce((s, o) => s + (o.distance_km || 0), 0)
+  const isComplete = selections.length >= activeSegments.length && selections.length > 0
 
-    if (opt.arrives_at_stop && opt.to_lat && opt.to_lng) {
-      setCurrentFromName(opt.to)
-      fetchStepFrom(opt.to_lat, opt.to_lng, opt.to)
-    } else {
-      setCurrentFromName(opt.to)
-      setSegmentStep(null)
-      setPhase('direct')
-    }
-    setSelectedColIndex(null)
-  }, [fetchStepFrom])
-
-  // Direct option picked
-  const handlePickDirect = useCallback((opt: SegmentStepOption) => {
-    setBuiltPath(prev => [...prev, opt])
-    setHoveredOption(null)
-    setCurrentFromName(destName)
-    setSegmentStep(null)
-    setPhase('direct')
-    // Mark in column
-    setColumns(prev => prev.map(c => {
-      if (c.type === 'direct' && !c.selectedOption) return { ...c, selectedOption: opt }
-      return c
-    }))
-  }, [destName])
-
-  // Go back and edit from a specific step
-  const handleGoBack = useCallback((stepIndex: number) => {
-    if (stepIndex < 0) {
-      handleStartBuilding()
-      return
-    }
-    const truncated = builtPath.slice(0, stepIndex)
-    const lastOpt = builtPath[stepIndex]
-    const fromName = truncated.length > 0 ? truncated[truncated.length - 1].to : sourceName
-    const fromLat = truncated.length > 0 ? truncated[truncated.length - 1].to_lat : sourceLocation[0]
-    const fromLng = truncated.length > 0 ? truncated[truncated.length - 1].to_lng : sourceLocation[1]
-    setBuiltPath(truncated)
-    setColumns([])
-    setSelectedColIndex(null)
-    setCurrentFromName(fromName)
-    setPhase('init')
-    setHoveredOption(null)
-    if (fromLat && fromLng) {
-      fetchStepFrom(fromLat, fromLng, fromName)
-    } else {
-      handleStartBuilding()
-    }
-  }, [builtPath, sourceName, sourceLocation, fetchStepFrom, handleStartBuilding])
-
-  const handleAddCustomWaypoint = useCallback((place: PlaceResult) => {
-    const customOpt: SegmentStepOption = {
-      mode: 'custom', label: `${place.name}`, icon: '📍',
-      from: currentFromName, to: place.name,
-      distance_km: 0, duration_minutes: 0, fare: 0, per_person: 0,
-      arrives_at_stop: true,
-      from_lat: segmentStep?.from.lat || sourceLocation[0],
-      from_lng: segmentStep?.from.lng || sourceLocation[1],
-      to_lat: place.lat, to_lng: place.lng,
-    }
-    setBuiltPath(prev => [...prev, customOpt])
-    setCurrentFromName(place.name)
-    setCustomInput('')
-    setCustomSuggestions([])
-    setShowCustomInput(false)
-    setPhase('init')
-    setColumns([])
-    setSelectedColIndex(null)
-    fetchStepFrom(place.lat, place.lng, place.name)
-  }, [currentFromName, segmentStep, sourceLocation, fetchStepFrom])
-
-  const handleCustomInput = useCallback(async (value: string) => {
-    setCustomInput(value)
-    if (value.length < 2) { setCustomSuggestions([]); return }
-    if (abortRef.current) abortRef.current.abort()
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
-    setCustomLoading(true)
-    searchTimerRef.current = setTimeout(async () => {
-      const ctrl = new AbortController()
-      abortRef.current = ctrl
-      try {
-        const data = await searchPlaces(value, destLocation[0], destLocation[1], ctrl.signal)
-        if (!ctrl.signal.aborted) setCustomSuggestions((data.results || []).slice(0, 5))
-      } catch { if (ctrl.signal.aborted) return; setCustomSuggestions([]) }
-      finally { setCustomLoading(false) }
-    }, 300)
-  }, [destLocation])
-
-  const totalFare = builtPath.reduce((sum, s) => sum + (s.fare || 0), 0)
-  const totalPerPerson = builtPath.reduce((sum, s) => sum + ((s.per_person || 0)), 0)
-  const totalDuration = builtPath.reduce((sum, s) => sum + (s.duration_minutes || 0), 0)
-  const totalDistance = builtPath.reduce((sum, s) => sum + (s.distance_km || 0), 0)
-  const isComplete = phase === 'direct' && builtPath.length > 0
-
-  // Build map geometry
+  // Map geometry
   useEffect(() => {
     const geo: MapRouteGeometry[] = []
-
     builtPath.forEach((opt, idx) => {
       const color = idx < SEGMENT_COLORS.length ? SEGMENT_COLORS[idx] : '#94a3b8'
-      const p = opt.path
-      if (p && p.length >= 2) {
-        geo.push({ type: 'segment', coordinates: p as [number, number][], color, weight: 4, label: `${getModeLabel(opt.mode)}: ${opt.distance_km}km` })
+      if (opt.path && opt.path.length >= 2) {
+        geo.push({ type: 'segment', coordinates: opt.path as [number, number][], color, weight: 4, label: `${getModeLabel(opt.mode)}: ${opt.distance_km}km` })
       } else if (opt.from_lat && opt.from_lng && opt.to_lat && opt.to_lng) {
         geo.push({ type: 'segment', coordinates: [[opt.from_lat, opt.from_lng], [opt.to_lat, opt.to_lng]], color, weight: 4, label: `${getModeLabel(opt.mode)}: ${opt.distance_km}km` })
       }
@@ -266,49 +125,30 @@ export default function SegmentPanel({
         geo.push({ type: 'stop', coordinates: [[opt.to_lat, opt.to_lng]] as [number, number][], color, label: opt.to })
       }
     })
-
     if (hoveredOption) {
       const hp = hoveredOption.path
       if (hp && hp.length >= 2) {
         geo.push({ type: 'hover', coordinates: hp as [number, number][], color: '#fbbf24', weight: 6, label: `${getModeLabel(hoveredOption.mode)}: ${hoveredOption.distance_km}km` })
       } else if (hoveredOption.from_lat && hoveredOption.from_lng && hoveredOption.to_lat && hoveredOption.to_lng) {
-        geo.push({ type: 'hover', coordinates: [[hoveredOption.from_lat, hoveredOption.from_lng], [hoveredOption.to_lat, hoveredOption.to_lng]], color: '#fbbf24', weight: 6, label: `${getModeLabel(hoveredOption.mode)}: ${hoveredOption.distance_km}km` })
+        geo.push({ type: 'hover', coordinates: [[hoveredOption.from_lat, hoveredOption.from_lng], [hoveredOption.to_lat, hoveredOption.to_lng]], color: '#fbbf24', weight: 6 })
       }
     }
-
     // Show all reachable stops
-    columns.forEach(c => {
-      if (c.type === 'reach' && !c.selectedOption && c.options.length > 0) {
-        geo.push({
-          type: 'stop',
-          coordinates: [[c.options[0].to_lat || 0, c.options[0].to_lng || 0]] as [number, number][],
-          color: '#3b82f6',
-          label: `🚏 ${c.label}`,
-        })
-      }
+    activeSegments.forEach((as, si) => {
+      as.seg.forEach((dest, di) => {
+        const isPicked = selections.some(s => s.dest === dest && s.segIdx === as.level)
+        if (!isPicked && dest.transport_options.length > 0) {
+          const t = dest.transport_options[0]
+          if (t.to_lat && t.to_lng) {
+            geo.push({ type: 'stop', coordinates: [[t.to_lat, t.to_lng]] as [number, number][], color: '#3b82f6', label: `🚏 ${dest.to.name}` })
+          }
+        }
+      })
     })
-
     onGeometryChange(geo)
-  }, [builtPath, hoveredOption, columns, onGeometryChange])
+  }, [builtPath, hoveredOption, activeSegments, selections, onGeometryChange])
 
-  const optCardStyle = (opt: SegmentStepOption, isSelected?: boolean): React.CSSProperties => ({
-    padding: '8px 10px',
-    background: isSelected ? '#0f2d1a' : (opt.mode === 'walk' ? '#0f2d1a' : '#1a2332'),
-    border: `1px solid ${isSelected ? '#22c55e' : MODE_COLORS[opt.mode] || '#334155'}`,
-    borderRadius: 8,
-    color: '#cbd5e1',
-    cursor: 'pointer',
-    fontSize: 10,
-    textAlign: 'left',
-    width: '100%',
-    transition: 'all 0.15s',
-    borderLeft: `4px solid ${MODE_COLORS[opt.mode] || '#64748b'}`,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
-  })
-
-  const renderOptionDetail = (opt: SegmentStepOption, idx: number) => {
+  const renderTransportOption = (opt: SegmentStepOption, idx: number, compact?: boolean) => {
     const rn = (opt as any).route_numbers
     const routeNum = (opt as any).route_number
     const busTimes = (opt as any).bus_times
@@ -320,59 +160,46 @@ export default function SegmentPanel({
 
     return (
       <div key={idx}>
-        {/* Icon + Label */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13 }}>{opt.icon || getModeIcon(opt.mode)}</span>
-          <span style={{ fontWeight: 600, fontSize: 11, color: '#e2e8f0' }}>{opt.label || getModeLabel(opt.mode)}</span>
+          <span style={{ fontSize: compact ? 11 : 13 }}>{opt.icon || getModeIcon(opt.mode)}</span>
+          <span style={{ fontWeight: 600, fontSize: compact ? 9 : 11, color: '#e2e8f0' }}>{opt.label || getModeLabel(opt.mode)}</span>
           {routeNum && (
-            <span style={{ fontSize: 10, color: '#60a5fa', background: '#1e3a5f', padding: '2px 6px', borderRadius: 4, fontWeight: 700 }}>
+            <span style={{ fontSize: compact ? 8 : 10, color: '#60a5fa', background: '#1e3a5f', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
               {routeNum}
             </span>
           )}
-          {!routeNum && rn && rn.length > 0 && (
-            <span style={{ fontSize: 8, color: '#60a5fa', background: '#1e3a5f', padding: '1px 4px', borderRadius: 3 }}>
-              {rn.slice(0, 3).join(', ')}
+          {!routeNum && rn?.length > 0 && (
+            <span style={{ fontSize: 7, color: '#60a5fa', background: '#1e3a5f', padding: '1px 3px', borderRadius: 3 }}>
+              {rn.slice(0, 2).join(', ')}
             </span>
           )}
-          {tn && <span style={{ fontSize: 9, color: '#a855f7', fontWeight: 600 }}>#{tn}</span>}
+          {tn && <span style={{ fontSize: compact ? 8 : 9, color: '#a855f7', fontWeight: 600 }}>#{tn}</span>}
         </div>
-
-        {/* Route info */}
-        <div style={{ fontSize: 9, color: '#64748b', marginTop: 1, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: compact ? 8 : 9, color: '#64748b', marginTop: 1, display: 'flex', gap: compact ? 3 : 6, flexWrap: 'wrap' }}>
           {dep && arr && <span style={{ color: '#a855f7' }}>🕐 {dep}→{arr}</span>}
           <span>{formatDuration(opt.duration_minutes)}</span>
           <span>{opt.distance_km.toFixed(2)}km</span>
-          <span style={{ color: '#fbbf24' }}>{formatRupees(opt.fare)} {opt.per_person ? `(${formatRupees(opt.per_person)}/pp)` : ''}</span>
-          {cap && <span style={{ color: '#64748b' }}>👥 up to {cap}</span>}
+          <span style={{ color: '#fbbf24' }}>{formatRupees(opt.fare)}</span>
+          {cap && <span style={{ color: '#64748b' }}>👥{cap}</span>}
         </div>
-
-        {/* Bus timings - individual route times */}
-        {busTimes && busTimes.length > 0 && (
-          <div style={{ fontSize: 8, color: '#f59e0b', marginTop: 2, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {busTimes?.length > 0 && (
+          <div style={{ fontSize: 7, color: '#f59e0b', marginTop: 1, display: 'flex', gap: 3, flexWrap: 'wrap' }}>
             ⏰ {busTimes.slice(0, 4).map((bt: any, bi: number) => (
-              <span key={bi} style={{ background: '#1e3a5f', padding: '1px 4px', borderRadius: 3, color: '#fbbf24' }}>
+              <span key={bi} style={{ background: '#1e3a5f', padding: '1px 3px', borderRadius: 2, color: '#fbbf24' }}>
                 {bt.departure_time}
               </span>
             ))}
           </div>
         )}
-
-        {/* No bus times available message */}
         {opt.mode.startsWith('bus_') && (!busTimes || busTimes.length === 0) && (
-          <div style={{ fontSize: 8, color: '#64748b', marginTop: 2, fontStyle: 'italic' }}>
-            Schedule data not available
+          <div style={{ fontSize: 7, color: '#64748b', fontStyle: 'italic' }}>
+            No schedule
           </div>
         )}
-
-        {/* Sub legs */}
-        {subLegs && subLegs.length > 0 && (
-          <div style={{ fontSize: 8, color: '#94a3b8', marginTop: 2 }}>
+        {subLegs?.length > 0 && (
+          <div style={{ fontSize: 7, color: '#94a3b8', marginTop: 1 }}>
             {subLegs.map((sl: any, si: number) => (
-              <span key={si}>
-                {getModeIcon(sl.mode)} {sl.from}→{sl.to}
-                {sl.fare ? ` ₹${sl.fare}` : ''}
-                {si < subLegs.length - 1 ? ' + ' : ''}
-              </span>
+              <span key={si}>{getModeIcon(sl.mode)} {sl.from}→{sl.to}{sl.fare ? ` ₹${sl.fare}` : ''}{si < subLegs.length - 1 ? ' + ' : ''}</span>
             ))}
           </div>
         )}
@@ -381,14 +208,14 @@ export default function SegmentPanel({
   }
 
   return (
-    <div ref={panelRef} style={{
+    <div style={{
       position: 'absolute', bottom: 0, left: 0, right: 0,
-      maxHeight: '65vh', background: '#0f172a',
+      maxHeight: '70vh', background: '#0f172a',
       borderTop: '2px solid #3b82f6', borderRadius: '16px 16px 0 0',
       zIndex: 9999, display: 'flex', flexDirection: 'column',
       boxShadow: '0 -8px 32px rgba(0,0,0,0.5)',
     }}>
-      {/* === HEADER === */}
+      {/* HEADER */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '8px 14px', borderBottom: '1px solid #1e293b',
@@ -396,12 +223,12 @@ export default function SegmentPanel({
         flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontWeight: 700, fontSize: 13, color: '#e2e8f0' }}>🔧 Segment Builder</span>
+          <span style={{ fontWeight: 700, fontSize: 13, color: '#e2e8f0' }}>🔧 All Segments</span>
           <span style={{ fontSize: 10, color: '#64748b' }}>📍 {sourceName} → 🏁 {destName}</span>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           {builtPath.length > 0 && (
-            <button onClick={handleStartBuilding} style={{
+            <button onClick={handleReset} style={{
               background: '#1e293b', border: '1px solid #334155',
               borderRadius: 4, color: '#94a3b8', cursor: 'pointer',
               fontSize: 10, padding: '2px 8px',
@@ -414,30 +241,26 @@ export default function SegmentPanel({
         </div>
       </div>
 
-      {/* === TIMELINE === */}
+      {/* TIMELINE */}
       <div style={{
         padding: '6px 14px', borderBottom: '1px solid #1e293b',
         overflowX: 'auto', flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 10, whiteSpace: 'nowrap', paddingBottom: 2 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 40, cursor: builtPath.length > 0 ? 'pointer' : 'default' }}
-            onClick={() => builtPath.length > 0 && handleGoBack(-1)}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 40 }}>
             <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, border: '2px solid #60a5fa' }}>📍</div>
             <span style={{ color: '#e2e8f0', fontSize: 8, marginTop: 1, maxWidth: 50, overflow: 'hidden', textOverflow: 'ellipsis' }}>{sourceName.slice(0, 8)}</span>
           </div>
           {builtPath.map((opt, idx) => {
             const color = idx < SEGMENT_COLORS.length ? SEGMENT_COLORS[idx] : '#94a3b8'
-            const isLast = idx === builtPath.length - 1
             return (
               <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <div style={{ width: 16, height: 3, background: color, borderRadius: 2 }} />
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 40, cursor: 'pointer' }}
-                  onClick={() => isLast ? null : handleGoBack(idx)}>
-                  <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#1a2332', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, position: 'relative' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 40 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#1a2332', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>
                     {opt.icon || getModeIcon(opt.mode)}
-                    {!isLast && <span style={{ position: 'absolute', top: -6, right: -6, fontSize: 7, color: '#94a3b8' }}>✕</span>}
                   </div>
-                  <span style={{ color: '#cbd5e1', fontSize: 8, marginTop: 1, maxWidth: 50, overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: isLast ? 600 : 400 }}>{opt.to.length > 8 ? opt.to.slice(0, 8) + '..' : opt.to}</span>
+                  <span style={{ color: '#cbd5e1', fontSize: 8, marginTop: 1, maxWidth: 50, overflow: 'hidden', textOverflow: 'ellipsis' }}>{opt.to.length > 8 ? opt.to.slice(0, 8) + '..' : opt.to}</span>
                   <span style={{ color: '#fbbf24', fontSize: 8, fontWeight: 500 }}>{formatRupees(opt.fare)}</span>
                 </div>
               </div>
@@ -447,129 +270,173 @@ export default function SegmentPanel({
             <div style={{ width: 16, height: 3, background: isComplete ? '#22c55e' : '#334155', borderRadius: 2 }} />
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 40 }}>
               <div style={{ width: 24, height: 24, borderRadius: '50%', background: isComplete ? '#0f2d1a' : '#1e293b', border: isComplete ? '2px solid #22c55e' : '2px dashed #334155', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>🏁</div>
-              <span style={{ color: isComplete ? '#22c55e' : '#64748b', fontSize: 8, marginTop: 1, fontWeight: isComplete ? 700 : 400, maxWidth: 50, overflow: 'hidden', textOverflow: 'ellipsis' }}>{destName.length > 8 ? destName.slice(0, 8) + '..' : destName}</span>
+              <span style={{ color: isComplete ? '#22c55e' : '#64748b', fontSize: 8, marginTop: 1, maxWidth: 50, overflow: 'hidden', textOverflow: 'ellipsis' }}>{destName.length > 8 ? destName.slice(0, 8) + '..' : destName}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* === SUMMARY BAR === */}
+      {/* SUMMARY BAR */}
       {builtPath.length > 0 && (
         <div style={{
           display: 'flex', gap: 10, padding: '4px 14px', background: '#1a2332',
-          borderBottom: '1px solid #1e293b', fontSize: 9, color: '#94a3b8', flexShrink: 0,
-          alignItems: 'center',
+          borderBottom: '1px solid #1e293b', fontSize: 9, color: '#94a3b8', flexShrink: 0, alignItems: 'center',
         }}>
-          <span>💰 <strong style={{ color: '#fbbf24' }}>{formatRupees(totalFare)}</strong>
-            {totalPerPerson > 0 && <span style={{ color: '#64748b', fontSize: 8 }}> ({formatRupees(totalPerPerson)}/pp)</span>}
-          </span>
+          <span>💰 <strong style={{ color: '#fbbf24' }}>{formatRupees(totalFare)}</strong></span>
           <span>⏱️ <strong style={{ color: '#e2e8f0' }}>{formatDuration(totalDuration)}</strong></span>
           <span>📏 <strong style={{ color: '#e2e8f0' }}>{totalDistance.toFixed(1)}km</strong></span>
           <span style={{ fontSize: 8, color: '#64748b' }}>{builtPath.length} step{builtPath.length !== 1 ? 's' : ''}</span>
           {budget && budget > 0 && (
             <div style={{ flex: 1, maxWidth: 120, marginLeft: 4 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 7, marginBottom: 1 }}>
-                <span style={{ color: totalFare > budget ? '#ef4444' : '#94a3b8' }}>
-                  {Math.round((totalFare / budget) * 100)}%
-                </span>
+                <span style={{ color: totalFare > budget ? '#ef4444' : '#94a3b8' }}>{Math.round((totalFare / budget) * 100)}%</span>
                 <span style={{ color: '#64748b' }}>of ₹{budget}</span>
               </div>
               <div style={{ height: 4, background: '#1e293b', borderRadius: 4, overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%', width: `${Math.min(100, (totalFare / budget) * 100)}%`,
-                  background: totalFare > budget ? '#ef4444' : '#22c55e',
-                  borderRadius: 4, transition: 'width 0.3s',
-                }} />
+                <div style={{ height: '100%', width: `${Math.min(100, (totalFare / budget) * 100)}%`, background: totalFare > budget ? '#ef4444' : '#22c55e', borderRadius: 4, transition: 'width 0.3s' }} />
               </div>
             </div>
           )}
-          {isComplete && <span style={{ color: '#22c55e', marginLeft: 'auto', fontWeight: 700, fontSize: 10 }}>✅ Done!</span>}
         </div>
       )}
 
-      {/* === SCROLLABLE COLUMNS === */}
+      {/* SEGMENTS */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '8px 14px' }}>
-        {segmentLoading && (
-          <div style={{ textAlign: 'center', padding: 20, color: '#64748b', fontSize: 12 }}>⏳ Loading options...</div>
+        {loading && (
+          <div style={{ textAlign: 'center', padding: 20, color: '#64748b', fontSize: 12 }}>⏳ Building journey tree...</div>
         )}
 
-        {!segmentLoading && columns.length === 0 && builtPath.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 20, color: '#64748b', fontSize: 12 }}>Loading initial options...</div>
+        {!loading && activeSegments.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 20, color: '#64748b', fontSize: 12 }}>No route options available</div>
         )}
 
-        {/* Columns layout */}
-        {columns.length > 0 && !segmentLoading && (
-          <div style={{
-            display: 'flex', gap: 10,
-            overflowX: 'auto', overflowY: 'visible',
-            paddingBottom: 4,
-          }}>
-            {columns.map((col, colIdx) => {
-              const isNext = colIdx > 0 && !columns[colIdx - 1].selectedOption
-              if (isNext) return null
+        {!loading && activeSegments.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {activeSegments.map((as, lvl) => {
+              const segColor = SEGMENT_COLORS[lvl % SEGMENT_COLORS.length]
+              const selectionAtLevel = selections.find(s => s.segIdx === as.level)
+              const isModeChoice = as.seg.some(d => d.to.type === 'mode_choice')
 
               return (
-                <div key={colIdx} style={{
-                  minWidth: 260, maxWidth: 320,
-                  background: '#131e2b',
-                  borderRadius: 10,
-                  border: `1px solid ${col.selectedOption ? '#22c55e' : '#334155'}`,
-                  flexShrink: 0,
-                  display: 'flex', flexDirection: 'column',
-                  maxHeight: '100%',
+                <div key={lvl} style={{
+                  background: '#131e2b', borderRadius: 10,
+                  border: `1px solid ${selectionAtLevel ? '#22c55e' : segColor}`,
+                  overflow: 'hidden',
                 }}>
-                  {/* Column header */}
-                  <div style={{
-                    padding: '8px 10px',
-                    background: col.selectedOption ? '#0f2d1a' : '#1a2332',
-                    borderRadius: '10px 10px 0 0',
-                    borderBottom: `1px solid ${col.selectedOption ? '#22c55e' : '#1e293b'}`,
-                    fontSize: 10, fontWeight: 700, color: col.selectedOption ? '#22c55e' : '#e2e8f0',
-                    display: 'flex', alignItems: 'center', gap: 4,
-                    flexShrink: 0,
-                  }}>
-                    <span>{col.selectedOption ? '✅' : '⬜'}</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col.label}</span>
-                    {col.fromName && (
-                      <span style={{ fontSize: 8, color: '#64748b', marginLeft: 'auto' }}>
-                        📍{col.fromName.slice(0, 12)}
+                  {!isModeChoice && (
+                    <div style={{
+                      padding: '6px 10px', background: '#1a2332',
+                      borderBottom: '1px solid #1e293b',
+                      fontSize: 11, fontWeight: 700, color: selectionAtLevel ? '#22c55e' : segColor,
+                      display: 'flex', alignItems: 'center', gap: 4,
+                    }}>
+                      <span>✦ S{lvl + 1}</span>
+                      <span style={{ fontSize: 9, color: '#64748b', fontWeight: 400, marginLeft: 4 }}>
+                        {as.level === 0 ? sourceName : (selections[lvl - 1]?.dest.to.name || '')} → {destName}
                       </span>
-                    )}
-                  </div>
+                      {selectionAtLevel && <span style={{ marginLeft: 'auto', color: '#22c55e', fontSize: 9 }}>✅ {selectionAtLevel.transport.mode}</span>}
+                    </div>
+                  )}
 
-                  {/* Options list */}
-                  <div style={{
-                    padding: '6px 8px',
-                    overflowY: 'auto',
-                    flex: 1,
-                    display: 'flex', flexDirection: 'column', gap: 4,
-                  }}>
-                    {col.selectedOption ? (
-                      <div style={optCardStyle(col.selectedOption, true)}>
-                        {renderOptionDetail(col.selectedOption, 0)}
-                      </div>
-                    ) : (
-                      col.options.length > 0 ? (
-                        col.options.map((opt, oi) => (
-                          <button key={oi}
-                            onClick={() => {
-                              if (col.type === 'direct') handlePickDirect(opt)
-                              else if (col.type === 'reach') handlePickReach(col.stageIdx, opt, segmentStep!)
-                              else if (col.type === 'from') handlePickFrom(opt, colIdx)
+                  {as.seg.length === 0 && (
+                    <div style={{ padding: 12, fontSize: 10, color: '#64748b', textAlign: 'center' }}>
+                      No onward options available from this stop
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: isModeChoice ? 8 : 6 }}>
+                    {(() => {
+                      if (isModeChoice) {
+                        // Show mode selection cards (Bus, Ride)
+                        const modeConfig: Record<string, { icon: string; label: string; color: string }> = {
+                          Bus: { icon: '🚌', label: 'Bus', color: '#3b82f6' },
+                          'Ride (Cab/Auto/Bike)': { icon: '🚗', label: 'Ride', color: '#f97316' },
+                        }
+                        return as.seg.map((dest, di) => {
+                          const mc = modeConfig[dest.to.name] || { icon: '⚡', label: dest.to.name, color: '#64748b' }
+                          const isPicked = selectionAtLevel?.dest === dest
+                          return (
+                            <button key={di} onClick={() => {
+                              if (dest.next?.destinations?.length) {
+                                handleSelect(dest, dest.transport_options[0], as.level)
+                              } else {
+                                handleSelect(dest, dest.transport_options[0], as.level)
+                              }
                             }}
-                            onMouseEnter={() => setHoveredOption(opt)}
-                            onMouseLeave={() => setHoveredOption(null)}
-                            style={optCardStyle(opt)}
-                          >
-                            {renderOptionDetail(opt, oi)}
-                          </button>
-                        ))
-                      ) : (
-                        <div style={{ fontSize: 10, color: '#64748b', padding: 8, textAlign: 'center' }}>
-                          No options available
-                        </div>
-                      )
-                    )}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 12,
+                                padding: '12px 14px',
+                                background: isPicked ? '#0f2d1a' : '#1a2332',
+                                border: `2px solid ${isPicked ? '#22c55e' : mc.color}`,
+                                borderRadius: 10, color: '#e2e8f0',
+                                cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                                width: '100%',
+                                opacity: isPicked ? 1 : 0.85,
+                              }}
+                            >
+                              <span style={{ fontSize: 24 }}>{mc.icon}</span>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 700, fontSize: 14, color: '#e2e8f0' }}>{mc.label}</div>
+                                <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                                  {dest.transport_options.length} option{dest.transport_options.length !== 1 ? 's' : ''} · {dest.next ? 'continues to next stop' : 'direct to destination'}
+                                </div>
+                              </div>
+                              <span style={{ fontSize: 11, color: mc.color }}>
+                                {dest.next ? '→' : '🏁'}
+                              </span>
+                            </button>
+                          )
+                        })
+                      }
+
+                      // Show transport option cards (segment 1+)
+                      const modeLabels: Record<string, string> = { ride: '🚗 Cab / Auto / Bike', bus: '🚌 Bus Routes', other: 'Other' }
+                      return as.seg.map((dest, di) => {
+                        const isPicked = selectionAtLevel?.dest === dest
+                        const tropt = dest.transport_options[0]
+                        if (!tropt) return null
+                        const isTransportPicked = isPicked && selectionAtLevel?.transport === tropt
+                        return (
+                          <div key={di} style={{
+                            background: '#0f172a',
+                            border: `1px solid ${isPicked ? '#22c55e' : '#1e293b'}`,
+                            borderRadius: 8, overflow: 'hidden',
+                          }}>
+                            <div style={{
+                              padding: '4px 8px', background: '#1a2332', borderBottom: '1px solid #1e293b',
+                              fontSize: 9, fontWeight: 600, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 4,
+                            }}>
+                              <span>{modeLabels[dest.to.type] || dest.to.type}</span>
+                              <span style={{ marginLeft: 'auto' }}>→ {dest.to.name}</span>
+                            </div>
+                            <div style={{ padding: 5, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                              <button
+                                onClick={() => handleSelect(dest, tropt, as.level)}
+                                onMouseEnter={() => setHoveredOption(tropt)}
+                                onMouseLeave={() => setHoveredOption(null)}
+                                style={{
+                                  flex: '1 1 100%',
+                                  padding: '6px 8px',
+                                  background: isTransportPicked ? '#0f2d1a' : '#1a2332',
+                                  border: `1px solid ${isTransportPicked ? '#22c55e' : MODE_COLORS[tropt.mode] || '#334155'}`,
+                                  borderRadius: 6, color: '#cbd5e1',
+                                  cursor: 'pointer', fontSize: 10, textAlign: 'left',
+                                  borderLeft: `3px solid ${MODE_COLORS[tropt.mode] || '#64748b'}`,
+                                  opacity: selectionAtLevel && !isTransportPicked ? 0.5 : 1,
+                                }}
+                              >
+                                {renderTransportOption(tropt, di, lvl > 0)}
+                                {dest.from_stops?.length > 0 && (
+                                  <div style={{ fontSize: 7, color: '#64748b', marginTop: 3, borderTop: '1px dashed #1e293b', paddingTop: 3 }}>
+                                    ↓ Arrive at {dest.to.name}: {dest.from_stops.slice(0, 2).map(fs => `${fs.to.name}`).join(', ')}
+                                  </div>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })
+                    })()}
                   </div>
                 </div>
               )
@@ -577,10 +444,10 @@ export default function SegmentPanel({
           </div>
         )}
 
-        {/* === BUILT PATH FULL DISPLAY === */}
-        {builtPath.length > 0 && isComplete && (
+        {/* BUILT PATH SUMMARY */}
+        {builtPath.length > 0 && (
           <div style={{ marginTop: 8, padding: 10, background: '#1a2332', borderRadius: 8, border: '1px solid #22c55e' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#22c55e', marginBottom: 8 }}>✅ Full Journey Path</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#22c55e', marginBottom: 8 }}>✅ Selected Path</div>
             {builtPath.map((opt, idx) => {
               const color = idx < SEGMENT_COLORS.length ? SEGMENT_COLORS[idx] : '#94a3b8'
               return (
@@ -603,14 +470,8 @@ export default function SegmentPanel({
                       {(opt as any).route_number && (
                         <span style={{ color: '#60a5fa', fontWeight: 600 }}>🚌 {(opt as any).route_number}</span>
                       )}
-                      {(opt as any).route_numbers && !(opt as any).route_number && (
-                        <span style={{ color: '#60a5fa' }}>🚌 [{(opt as any).route_numbers.join(', ')}]</span>
-                      )}
                       {(opt as any).train_number && (
                         <span style={{ color: '#a855f7' }}>🚆 #{(opt as any).train_number}</span>
-                      )}
-                      {(opt as any).departure_time && (
-                        <span style={{ color: '#f59e0b' }}>🕐 {(opt as any).departure_time}</span>
                       )}
                     </div>
                   </div>
@@ -620,7 +481,7 @@ export default function SegmentPanel({
           </div>
         )}
 
-        {/* === CUSTOM STOP === */}
+        {/* CUSTOM STOP */}
         <div style={{ display: 'flex', gap: 6, marginTop: 8, marginBottom: 4, flexShrink: 0 }}>
           {!showCustomInput ? (
             <button onClick={() => setShowCustomInput(true)} style={{
@@ -633,7 +494,21 @@ export default function SegmentPanel({
           ) : (
             <div style={{ flex: 1, position: 'relative' }}>
               <input type="text" placeholder="Search a place to stop at..." value={customInput}
-                onChange={(e) => handleCustomInput(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value; setCustomInput(v)
+                  if (v.length < 2) { setCustomSuggestions([]); return }
+                  if (abortRef.current) abortRef.current.abort()
+                  if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+                  setCustomLoading(true)
+                  searchTimerRef.current = setTimeout(async () => {
+                    const ctrl = new AbortController(); abortRef.current = ctrl
+                    try {
+                      const data = await searchPlaces(v, destLocation[0], destLocation[1], ctrl.signal)
+                      if (!ctrl.signal.aborted) setCustomSuggestions((data.results || []).slice(0, 5))
+                    } catch { if (ctrl.signal.aborted) return; setCustomSuggestions([]) }
+                    finally { setCustomLoading(false) }
+                  }, 300)
+                }}
                 style={{
                   width: '100%', padding: '8px 10px', fontSize: 12, border: '1px solid #475569',
                   borderRadius: 6, background: '#1e293b', color: '#e2e8f0', outline: 'none',
@@ -646,7 +521,9 @@ export default function SegmentPanel({
                   maxHeight: 160, overflowY: 'auto',
                 }}>
                   {customSuggestions.map((place, i) => (
-                    <div key={i} onClick={() => handleAddCustomWaypoint(place)}
+                    <div key={i} onClick={() => {
+                      setCustomInput(''); setCustomSuggestions([]); setShowCustomInput(false)
+                    }}
                       style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 12, color: '#cbd5e1', borderBottom: '1px solid #334155' }}>
                       {getModeIcon(place.place_type)} {place.name}
                       <span style={{ fontSize: 10, color: '#64748b', marginLeft: 6 }}>{place.address?.slice(0, 30)}</span>

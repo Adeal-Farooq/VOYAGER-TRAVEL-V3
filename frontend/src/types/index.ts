@@ -224,6 +224,34 @@ export interface SegmentStepData {
   }[]
 }
 
+export interface CompleteJourneyDestOption {
+  to: SegmentStopInfo
+  transport_options: SegmentStepOption[]
+  next: CompleteJourneySegmentNode | null
+  from_stops: { to: SegmentStopInfo; transport_options: SegmentStepOption[] }[]
+}
+
+export interface CompleteJourneySegmentNode {
+  from: { name: string; lat: number; lng: number }
+  destinations: CompleteJourneyDestOption[]
+  direct_options: SegmentStepOption[]
+}
+
+export interface CompleteJourneySegment {
+  segment_index: number
+  from: { name: string; lat: number; lng: number }
+  destinations: CompleteJourneyDestOption[]
+  direct_options: SegmentStepOption[]
+  parent_via_index?: number | null
+}
+
+export interface CompleteJourneyResponse {
+  from: { lat: number; lng: number; name: string }
+  dest: { lat: number; lng: number; name: string }
+  segments: CompleteJourneySegment[]
+  direct_options: SegmentStepOption[]
+}
+
 export interface NewsItem {
   title: string
   description: string
