@@ -65,7 +65,7 @@ class LLMAgent:
         import google.generativeai as genai
         import asyncio
         genai.configure(api_key=settings.GEMINI_API_KEY)
-        models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+        models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"]
         for model_name in models:
             try:
                 model = genai.GenerativeModel(model_name)

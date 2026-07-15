@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { AppMode, PlaceResult, MapRouteGeometry, NewsItem } from '../types'
 import { enrichPlace } from '../services/api'
 import MapView from '../components/MapView'
@@ -60,6 +60,9 @@ export default function MainPage({
   const [segmentGroupSize, setSegmentGroupSize] = useState(1)
   const [segmentBudget, setSegmentBudget] = useState<number | undefined>(undefined)
   const [segmentGeometry, setSegmentGeometry] = useState<MapRouteGeometry[]>([])
+  const [liveTrackingPos, setLiveTrackingPos] = useState<[number, number] | null>(null)
+  const [trackingActive, setTrackingActive] = useState(false)
+  const trackingWatcherRef = useRef<number | null>(null)
 
   const handleOpenSegmentPanel = useCallback((srcName: string, dstName: string, groupSize: number, budget?: number) => {
     setSegmentSourceName(srcName)
@@ -68,12 +71,46 @@ export default function MainPage({
     setSegmentBudget(budget)
     setSegmentGeometry([])
     setSegmentPanelOpen(true)
-  }, [])
+    setLiveTrackingPos(null)
+    setTrackingActive(false)
+    setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize()
+      }
+    }, 100)
+  }, [mapRef])
 
   const handleCloseSegmentPanel = useCallback(() => {
     setSegmentPanelOpen(false)
     setSegmentGeometry([])
     setRouteGeometry(prev => prev.filter(g => g.type !== 'segment' && g.type !== 'hover' && g.type !== 'stop'))
+    if (trackingWatcherRef.current !== null) {
+      navigator.geolocation.clearWatch(trackingWatcherRef.current)
+      trackingWatcherRef.current = null
+    }
+    setLiveTrackingPos(null)
+    setTrackingActive(false)
+    setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize()
+      }
+    }, 100)
+  }, [mapRef])
+
+  const handleStartJourney = useCallback(() => {
+    if (!navigator.geolocation) return
+    setTrackingActive(true)
+    const watcherId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setLiveTrackingPos([pos.coords.latitude, pos.coords.longitude])
+      },
+      (err) => {
+        console.warn('GPS error:', err.message)
+        setTrackingActive(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    )
+    trackingWatcherRef.current = watcherId
   }, [])
 
   const handleSegmentGeometry = useCallback((geo: MapRouteGeometry[]) => {
@@ -226,12 +263,12 @@ export default function MainPage({
         </div>
       </div>
 
-      <div className="map-container">
+      <div className="map-container" style={{ paddingBottom: segmentPanelOpen ? '2px' : 0 }}>
         <MapView
           center={mapCenter}
           onCenterChange={onMapCenterChange}
           selectedPlace={selectedPlace}
-          userLocation={userLocation}
+          userLocation={liveTrackingPos || userLocation}
           sourceLocation={sourceLocation}
           destLocation={destLocation}
           mapRef={mapRef}
@@ -240,6 +277,8 @@ export default function MainPage({
           routeGeometry={[...routeGeometry, ...segmentGeometry]}
           newsItems={newsItems}
           waypoints={mapWaypoints}
+          liveTrackingPos={liveTrackingPos}
+          trackingActive={trackingActive}
         />
         <NewsOverlay
           news={newsItems}
@@ -264,6 +303,8 @@ export default function MainPage({
             budget={segmentBudget}
             onClose={handleCloseSegmentPanel}
             onGeometryChange={handleSegmentGeometry}
+            onStartJourney={handleStartJourney}
+            trackingActive={trackingActive}
           />
         )}
       </div>

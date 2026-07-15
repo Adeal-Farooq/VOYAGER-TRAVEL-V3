@@ -17,6 +17,8 @@ interface MapViewProps {
   onMapClick?: (latlng: [number, number]) => void
   newsItems?: NewsItem[]
   waypoints?: { lat: number; lng: number; query: string }[]
+  liveTrackingPos?: [number, number] | null
+  trackingActive?: boolean
 }
 
 function createColoredPin(color: string, emoji: string, size: number = 28, glow: boolean = false) {
@@ -131,6 +133,7 @@ export default function MapView({
   center, selectedPlace, userLocation, sourceLocation,
   destLocation, mapRef, allMarkers, onMarkerClick,
   routeGeometry, onMapClick, newsItems, waypoints,
+  liveTrackingPos, trackingActive,
 }: MapViewProps) {
   const userIcon = useMemo(() => createColoredPin('#3b82f6', '📍', 32, true), [])
   const sourceIcon = useMemo(() => createColoredPin('#3b82f6', '🟢', 24), [])
@@ -239,7 +242,7 @@ export default function MapView({
         )
       })}
 
-      {userLocation && (
+      {userLocation && !trackingActive && (
         <Marker position={userLocation} icon={userIcon}>
           <Popup>
             <strong>📍 Your Location</strong>
@@ -247,6 +250,20 @@ export default function MapView({
             <span style={{ fontSize: 12, color: '#666' }}>
               {userLocation[0].toFixed(4)}, {userLocation[1].toFixed(4)}
             </span>
+          </Popup>
+        </Marker>
+      )}
+
+      {liveTrackingPos && (
+        <Marker position={liveTrackingPos} icon={createColoredPin('#22c55e', '🟢', 36, true)}>
+          <Popup>
+            <strong>📍 Live Position</strong>
+            <br />
+            <span style={{ fontSize: 12, color: '#666' }}>
+              {liveTrackingPos[0].toFixed(4)}, {liveTrackingPos[1].toFixed(4)}
+            </span>
+            <br />
+            <span style={{ fontSize: 11, color: '#22c55e' }}>🚶 Tracking active</span>
           </Popup>
         </Marker>
       )}

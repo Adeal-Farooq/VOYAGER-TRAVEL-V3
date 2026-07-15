@@ -344,6 +344,122 @@ async def get_live_prices(source: str = Query(...), dest: str = Query(...), mode
     prices = await llm_agent.get_live_prices(source, dest, mode)
     return {"status": "success", "prices": prices}
 
+@router.get("/all-segments")
+async def get_all_segments(
+    from_lat: float = Query(...), from_lng: float = Query(...),
+    from_name: str = Query("Your Location"),
+    dest_lat: float = Query(...), dest_lng: float = Query(...),
+    dest_name: str = Query("Destination"),
+    group_size: int = Query(1), budget: float = Query(None),
+    max_depth: int = Query(3),
+):
+    result = transit_service.get_all_segments(
+        from_lat, from_lng, from_name, dest_lat, dest_lng, dest_name, group_size, budget, max_depth
+    )
+    # Fire LLM live pricing concurrently with OSRM path fetching
+    async def _fetch_live_prices():
+        try:
+            return await asyncio.wait_for(
+                llm_agent.get_live_prices(from_name, dest_name), timeout=8.0
+            )
+        except:
+            return []
+    llm_task = asyncio.create_task(_fetch_live_prices())
+
+    # Collect OSRM paths for non-transit options (direct cabs/auto/walk, reach, final mile)
+    # Bus transit uses interpolated paths (instant) — only metro/train get OSRM
+    osrm_sem = asyncio.Semaphore(15)
+    path_tasks = []
+    async def _fetch_osrm(opt, profile):
+        async with osrm_sem:
+            try:
+                p = await transit_service.get_osrm_path_between(opt["from_lat"], opt["from_lng"], opt["to_lat"], opt["to_lng"], profile)
+                if p:
+                    opt["path"] = p
+            except:
+                pass
+    driving_modes = {"cab","cab_xl","cab_women","cab_pet","auto","bike"}
+    for seg in result.get("segments", []):
+        for opt in seg.get("direct_options", []):
+            if not opt.get("path") and opt.get("from_lat") and opt.get("to_lat") and opt.get("mode") in driving_modes:
+                path_tasks.append(_fetch_osrm(opt, "driving"))
+        for dest in seg.get("destinations", []):
+            for opt in dest.get("reach_options", []):
+                if not opt.get("path") and opt.get("from_lat") and opt.get("to_lat") and opt.get("mode") in driving_modes:
+                    path_tasks.append(_fetch_osrm(opt, "driving"))
+            for opt in dest.get("transit_options", []):
+                # Only OSRM for metro/train (not bus)
+                if opt.get("mode") not in ("bus_ordinary", "bus_ac_vajra", "kia_bus") and opt.get("mode") in driving_modes:
+                    if not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
+                        path_tasks.append(_fetch_osrm(opt, "driving"))
+                for fopt in opt.get("final_options", []):
+                    if not fopt.get("path") and fopt.get("from_lat") and fopt.get("to_lat") and fopt.get("mode") in driving_modes:
+                        path_tasks.append(_fetch_osrm(fopt, "driving"))
+    if path_tasks:
+        await asyncio.gather(*path_tasks)
+
+    # Apply live prices if LLM returned them
+    live_prices = await llm_task
+    if live_prices:
+        price_map = {}
+        for p in live_prices:
+            pmode = p.get("mode", "cab")
+            price_map[pmode] = {"price": p.get("price", 0), "provider": p.get("provider", "Ride"), "eta": p.get("eta_minutes", 15)}
+        for seg in result.get("segments", []):
+            for opt in seg.get("direct_options", []):
+                omode = opt.get("mode", "")
+                if omode in price_map:
+                    lp = price_map[omode]
+                    if lp["price"] > 0:
+                        opt["fare"] = lp["price"] * group_size
+                        opt["per_person"] = round(lp["price"])
+                        opt["live_provider"] = lp["provider"]
+                        opt["live_eta"] = lp["eta"]
+                        opt["label"] = f"{lp['provider']} ~₹{round(lp['price'])}"
+            for dest in seg.get("destinations", []):
+                for opt in dest.get("reach_options", []):
+                    omode = opt.get("mode", "")
+                    if omode in price_map:
+                        lp = price_map[omode]
+                        if lp["price"] > 0:
+                            opt["fare"] = lp["price"] * group_size
+                            opt["per_person"] = round(lp["price"])
+                            opt["live_provider"] = lp["provider"]
+                            opt["live_eta"] = lp["eta"]
+                            opt["label"] = f"{lp['provider']} ~₹{round(lp['price'])}"
+    # Interpolated fallback for any option still missing a path
+    for seg in result.get("segments", []):
+        for opt in seg.get("direct_options", []):
+            if not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
+                opt["path"] = transit_service._interpolate_path(opt["from_lat"], opt["from_lng"], opt["to_lat"], opt["to_lng"], 6)
+        for dest in seg.get("destinations", []):
+            for opt in dest.get("reach_options", []):
+                if not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
+                    opt["path"] = transit_service._interpolate_path(opt["from_lat"], opt["from_lng"], opt["to_lat"], opt["to_lng"], 6)
+            for opt in dest.get("transit_options", []):
+                if not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
+                    opt["path"] = transit_service._interpolate_path(opt["from_lat"], opt["from_lng"], opt["to_lat"], opt["to_lng"], 6)
+                for fopt in opt.get("final_options", []):
+                    if not fopt.get("path") and fopt.get("from_lat") and fopt.get("to_lat"):
+                        fopt["path"] = transit_service._interpolate_path(fopt["from_lat"], fopt["from_lng"], fopt["to_lat"], fopt["to_lng"], 6)
+    # Strip internal keys from response
+    def _strip_internal(segments):
+        for seg in segments:
+            for dest in seg.get("destinations", []):
+                for topt in dest.get("transit_options", []):
+                    topt.pop("needs_next_segment", None)
+    _strip_internal(result.get("segments", []))
+    return _sanitize({
+        "status": "success",
+        "data": {
+            "source": result.get("source"),
+            "dest": result.get("dest"),
+            "segments": result.get("segments", []),
+            "total_segments": result.get("total_segments", 0),
+        }
+    })
+
+
 @router.get("/mini-path-options")
 async def get_mini_path_options(
     source_lat: float = Query(...),

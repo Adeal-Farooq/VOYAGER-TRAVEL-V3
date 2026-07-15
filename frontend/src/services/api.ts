@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { SearchResponse, NearbyResponse, RoutePlanResponse, RidePriceResponse, EnrichSingleResponse } from '../types'
+import type { SearchResponse, NearbyResponse, RoutePlanResponse, RidePriceResponse, EnrichSingleResponse, AllSegmentsResponse } from '../types'
 import type { PlaceResult } from '../types'
 
 const api = axios.create({
@@ -97,6 +97,21 @@ export async function getSegmentStep(
   }
   if (budget !== undefined) params.budget = budget
   const { data } = await api.get('/routes/segment-step', { params })
+  return data
+}
+
+export async function getAllSegments(
+  fromLat: number, fromLng: number, fromName: string,
+  destLat: number, destLng: number, destName: string,
+  groupSize: number = 1, budget?: number, maxDepth: number = 3
+): Promise<AllSegmentsResponse> {
+  const params: any = {
+    from_lat: fromLat, from_lng: fromLng, from_name: fromName,
+    dest_lat: destLat, dest_lng: destLng, dest_name: destName,
+    group_size: groupSize, max_depth: maxDepth,
+  }
+  if (budget !== undefined) params.budget = budget
+  const { data } = await api.get<AllSegmentsResponse>('/routes/all-segments', { params })
   return data
 }
 
