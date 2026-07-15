@@ -1,512 +1,468 @@
-# VOYAGER - Bengaluru Transit Navigator
-## Complete Project Documentation
+# VOYAGER — Bengaluru Route Planner: Complete Documentation
 
-> **Last Updated**: July 14, 2026
-> **Author**: AI-Assisted Development
-> **Version**: 1.0.0
-
----
-
-# TABLE OF CONTENTS
-
-1. [PROJECT OVERVIEW](#1-project-overview)
-2. [SYSTEM ARCHITECTURE](#2-system-architecture)
-3. [PROJECT STRUCTURE](#3-project-structure)
-4. [BACKEND CORE](#4-backend-core)
-5. [TRANSIT SERVICE - THE ROUTING ENGINE](#5-transit-service---the-routing-engine)
-6. [THE SEGMENT BUILDER](#6-the-segment-builder)
-7. [GTFS INTEGRATION](#7-gtfs-integration)
-8. [FRONTEND COMPONENTS](#8-frontend-components)
-9. [API ENDPOINTS](#9-api-endpoints)
-10. [DATA LAYER](#10-data-layer)
-11. [PRICING AND FARES](#11-pricing-and-fares)
-12. [TRAIN INTEGRATION](#12-train-integration)
-13. [RAILWAY STATIONS](#13-railway-stations)
-14. [METRO INTEGRATION](#14-metro-integration)
-15. [BUS INTEGRATION](#15-bus-integration)
-16. [RIDE TYPES / CABS / AUTO / BIKE](#16-ride-types--cabs--auto--bike)
-17. [SMART FILTERING RULES](#17-smart-filtering-rules)
-18. [MULTI-MODAL ROUTES](#18-multi-modal-routes)
-19. [LLM / AI INTEGRATION](#19-llm--ai-integration)
-20. [n8n WORKFLOW INTEGRATION](#20-n8n-workflow-integration)
-21. [ML MODULES (STANDALONE)](#21-ml-modules-standalone)
-22. [GEODING / PLACE SEARCH](#22-geocoding--place-search)
-23. [MAP AND VISUALIZATION](#23-map-and-visualization)
-24. [FRONTEND UI DETAILS](#24-frontend-ui-details)
-25. [DEVELOPMENT SETUP AND RUNNING](#25-development-setup-and-running)
-26. [KNOWN ISSUES AND LIMITATIONS](#26-known-issues-and-limitations)
-27. [NEXT STEPS / ROADMAP](#27-next-steps--roadmap)
-28. [WHAT CAN BE ADDED / ENHANCED](#28-what-can-be-added--enhanced)
-29. [APPENDIX: CODE CONVENTIONS](#29-appendix-code-conventions)
-30. [APPENDIX: FARE TABLES](#30-appendix-fare-tables)
+> **Version:** 1.0.0  
+> **Last Updated:** July 2026  
+> **Location:** `C:\Users\len\OneDrive\Desktop\VOYAGER`
 
 ---
 
-# 1. PROJECT OVERVIEW
+## Table of Contents
 
-## 1.1 What is VOYAGER?
+1. [Project Overview](#1-project-overview)
+2. [System Architecture](#2-system-architecture)
+3. [Data Sources & Transit Database](#3-data-sources--transit-database)
+4. [Backend Components](#4-backend-components)
+5. [Frontend Components](#5-frontend-components)
+6. [API Reference](#6-api-reference)
+7. [Route Planning Engine](#7-route-planning-engine)
+8. [Segment Builder (Mini-Path / Step-by-Step)](#8-segment-builder)
+9. [Scoring & Recommendations](#9-scoring--recommendations)
+10. [GTFS Bus Route Geometry](#10-gtfs-bus-route-geometry)
+11. [Traffic Overlay System](#11-traffic-overlay-system)
+12. [ML & Optimization](#12-ml--optimization)
+13. [Current State & Known Issues](#13-current-state--known-issues)
+14. [Roadmap & Future Work](#14-roadmap--future-work)
+15. [Appendix: File Reference](#15-appendix-file-reference)
 
-VOYAGER is a **multi-modal route planning assistant** for Bengaluru, India. It helps travellers find the best way to get from point A to point B using a combination of:
+---
 
-- **BMTC city buses** (ordinary + AC Vajra)
-- **Namma Metro** (Green Line, Purple Line, interchange stations)
-- **Indian Railways** (48 Karnataka railway stations)
+## 1. Project Overview
+
+### 1.1 What is VOYAGER?
+
+VOYAGER is a **multi-modal route planning application** for Bengaluru, India. It helps users plan journeys from point A to point B using any combination of:
+
+- **BMTC city buses** (ordinary, AC Vajra)
+- **Namma Metro** (Green Line, Purple Line, interchanges)
 - **KIA Vayu Vajra airport buses**
-- **Ride-hailing** (Uber Go, Ola Mini, Uber XL, Ola XL, Auto, Uber Moto, Rapido, Uber for Women, Uber Pet)
-- **Walking** (for last-mile connections)
+- **Personal car** (with fuel cost estimation)
+- **Walking** (for short distances and last-mile connectivity)
+- **Ride-hailing** (Uber, Ola, Rapido — price estimates via LLM)
+- **Custom multi-stop journeys** via the segment builder
 
-## 1.2 Core Philosophy
+### 1.2 Core Features
 
-The app uses a **two-phase segment builder** approach:
+| Feature | Status | Description |
+|---------|--------|-------------|
+| A→B route planning | ✅ Complete | Full multi-modal routes with turn-by-turn legs |
+| Direct routes view | ✅ Complete | Scrollable route cards sorted by TOPSIS score |
+| Segment builder | ✅ Complete | Step-by-step interactive route construction |
+| Bus route geometry | ✅ Complete | Real road paths from GTFS shapes |
+| Metro rail paths | ✅ Complete | Station-to-station line paths |
+| Walking paths | ✅ Complete | OSRM walking profile with dashed polylines |
+| Traffic overlay | ✅ Complete | GeoJSON roads with congestion heatmap |
+| Ride price estimates | ✅ Partial | LLM-generated estimates (closed APIs) |
+| AI recommendations | ✅ Complete | Route suggestions with weather/traffic context |
+| Travel news | ✅ Complete | LLM-generated travel alerts & tips |
+| Place search | ✅ Complete | OSM Nominatim + LLM fallback |
+| Place enrichment | ✅ Complete | Reviews, images, hotel prices |
 
-1. **Phase "init"**: From the user's current location, show ALL available options:
-   - Direct options (walk, cab, auto, bike) that go straight to destination
-   - Via transit stops (bus stops, metro stations, railway stations) that show how to REACH each stop
+### 1.3 Tech Stack
 
-2. **Phase "from"**: After picking a transit stop and how to reach it, show what to do FROM that stop:
-   - Individual bus route cards with GTFS departure times
-   - Metro rides to destination
-   - Train options (for railway stations)
-   - Walk (if destination is within 2 km)
-   - Cab/auto/bike to destination
-
-3. **Phase "direct"**: Journey is complete - the user has picked a direct option or reached their destination.
-
-## 1.3 Target Users
-
-- Daily commuters in Bengaluru looking for optimal multi-modal routes
-- Tourists visiting Bengaluru and surrounding Karnataka cities (Mysuru, Hubballi, Mangaluru, etc.)
-- Users who want to compare cost, time, and comfort across different transport modes
-
----
-
-# 2. SYSTEM ARCHITECTURE
-
-## 2.1 High-Level Architecture
-
-```
-┌──────────────┐     HTTP/JSON      ┌──────────────────┐     HTTP/Proxy    ┌──────────────────┐
-│   Frontend    │ ◄──────────────►  │    Backend API    │ ◄──────────────► │  External APIs    │
-│  Vite + React │    localhost:     │   FastAPI +       │    OSRM/n8n/     │  (OSRM, n8n,      │
-│  TypeScript   │    3000 ◄─► 8000   │   Python 3.12     │    OpenRouter    │   Wikipedia, etc.) │
-└──────────────┘                    └──────────────────┘                   └──────────────────┘
-                                           │
-                                           ▼
-                                    ┌──────────────────┐
-                                    │  Data Layer       │
-                                    │  - SQLite?        │
-                                    │  - JSON/CSV files  │
-                                    │  - GTFS zip        │
-                                    └──────────────────┘
-```
-
-## 2.2 Technology Stack
-
-| Layer | Technology | Version / Notes |
-|-------|-----------|-----------------|
-| Frontend | React + TypeScript | Vite 5.4 build tool |
-| Frontend Map | Leaflet + react-leaflet | OpenStreetMap tiles |
-| Backend | FastAPI (Python) | uvicorn server |
-| Backend Routing | geopy (geodesic) | Haversine distance calculations |
-| Backend HTTP | httpx | Async HTTP client |
-| Backend Config | pydantic-settings | `.env` file loading |
-| GTFS | Custom loader | Parses GTFS zip, 50k stop_times limit |
-| LLM | OpenRouter (primary) | GPT-4o-mini, with Gemini fallback |
-| n8n | Self-hosted | Webhook-based workflow automation |
-| OSRM | router.project-osrm.org | Open Source Routing Machine |
-
-## 2.3 Port Configuration
-
-| Service | Port | URL |
-|---------|------|-----|
-| Frontend (Vite) | 3000 | http://localhost:3000 |
-| Backend (FastAPI) | 8000 | http://localhost:8000 |
-| n8n (optional) | 5678 | http://localhost:5678 |
-| Swagger Docs | -- | http://localhost:8000/docs |
-| ReDoc | -- | http://localhost:8000/redoc |
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Frontend | React 18 + TypeScript | UI components |
+| Map | Leaflet + react-leaflet | Map rendering |
+| HTTP | Axios | API client |
+| Build | Vite 5 | Dev server & bundling |
+| Backend | Python 3.12 + FastAPI | API server |
+| Routing | OSRM (router.project-osrm.org) | Road path geometry |
+| Geocoding | OSM Nominatim + LLM | Place search |
+| LLM | OpenRouter (GPT-4o-mini) + Gemini | AI features |
+| Transit data | GTFS (BMTC), CSV/JSON | Local transit database |
+| ML | Custom TOPSIS, A* | Route scoring & optimization |
 
 ---
 
-# 3. PROJECT STRUCTURE
+## 2. System Architecture
 
-## 3.1 Directory Tree
+### 2.1 High-Level Architecture
 
 ```
-VOYGAR/
-├── .env                          # Environment variables (API keys)
-├── .gitignore                    # Git ignore rules
-├── AGENTS.md                     # AI agent instructions (summary)
-├── requirements.txt              # Python dependencies
-├── backend/
-│   ├── main.py                   # FastAPI entry point (58 lines)
+┌─────────────────────────────────────────────────────────────────────┐
+│                        BROWSER (http://localhost:3000)               │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │  React App (App.tsx)                                            │ │
+│  │  ├── MainPage.tsx (orchestrator)                                │ │
+│  │  ├── SearchPanel.tsx (place search)                             │ │
+│  │  ├── AToBPanel.tsx (route planner)                             │ │
+│  │  ├── MapView.tsx (Leaflet map)                                 │ │
+│  │  ├── DiscoveryPanel.tsx (place details)                        │ │
+│  │  ├── TripPanel.tsx (multi-destination stub)                    │ │
+│  │  └── NewsOverlay.tsx (travel news)                             │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+└────────────────────────┬────────────────────────────────────────────┘
+                         │ Axios /api/* (port 3000 → proxy port 8000)
+                         ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    VITE PROXY (vite.config.ts)                       │
+│                    http://localhost:3000/api/* → :8000               │
+└────────────────────────┬────────────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────────────┐
+│                   FASTAPI BACKEND (port 8000)                        │
+│                                                                      │
+│  main.py ─── router: search.py (/api/search/*)                      │
+│          └── router: routes.py (/api/routes/*)                      │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────────┐│
+│  │ Services Layer                                                   ││
+│  │  ├── transit_service.py   → Route generation, OSRM, GTFS         ││
+│  │  ├── gtfs_service.py      → BMTC GTFS loader                     ││
+│  │  ├── geocoding.py         → Place search + enrichment            ││
+│  │  ├── llm_agent.py         → AI chat, recs, prices                ││
+│  │  ├── n8n_service.py       → n8n webhook proxy                    ││
+│  │  └── images.py            → Wikipedia image fetching             ││
+│  ├──────────────────────────────────────────────────────────────────┤│
+│  │ Core Layer                                                       ││
+│  │  ├── database.py          → In-memory transit DB                 ││
+│  │  └── config.py            → Settings (.env)                      ││
+│  ├──────────────────────────────────────────────────────────────────┤│
+│  │ ML Layer                                                         ││
+│  │  ├── topsis.py            → Multi-criteria scoring               ││
+│  │  ├── astar.py             → A* shortest path on transit graph    ││
+│  │  └── data_preprocessor.py → CSV cleaning utilities               ││
+│  └──────────────────────────────────────────────────────────────────┘│
+│                                                                      │
+│  Data Files (DATA_CACHE_DIR = ./data_cache/)                         │
+│  ├── bengaluru_metro_network.csv   → 52 stations, 2 lines            │
+│  ├── bmtc_all_stops_master.csv     → ~9,783 bus stops                │
+│  ├── bmtc_gtfs.zip                → GTFS feed (47MB)                 │
+│  ├── transit_fares.json           → Fare slabs                       │
+│  ├── kia_routes_fare_full.json    → Airport bus routes               │
+│  ├── bangalore_roads.geojson      → 18 major roads for traffic       │
+│  └── traffic_logs.csv             → Speed data for traffic           │
+└─────────────────────────────────────────────────────────────────────┘
+                         │
+                         ▼ External Services
+  ┌──────────┬──────────┬───────────┬──────────────┬──────────────┐
+  │ OSRM     │ OSM      │ OpenRouter│ n8n (optional)│ Gemini (fall│
+  │ route    │ Nominatim│ GPT-4o    │ (weather,    │ back LLM)   │
+  │ profiles │ geocode  │ mini      │ reviews, etc)│             │
+  └──────────┴──────────┴───────────┴──────────────┴──────────────┘
+```
+
+### 2.2 Directory Structure (Simplified)
+
+```
+VOYAGER/
+├── backend/                     # FastAPI Python backend
+│   ├── main.py                  # App entry point
+│   ├── agents/
+│   │   └── llm_agent.py        # LLM orchestration
 │   ├── api/
-│   │   ├── routes.py             # All /api/routes/* endpoints (569 lines)
-│   │   └── search.py             # All /api/search/* endpoints (83 lines)
+│   │   ├── routes.py           # Route planning APIs (570 lines)
+│   │   └── search.py           # Search & discovery APIs
 │   ├── core/
-│   │   ├── config.py             # Settings class (49 lines)
-│   │   └── database.py           # TransitDatabase singleton (286 lines)
+│   │   ├── config.py           # Settings from .env
+│   │   └── database.py         # In-memory transit DB
 │   ├── models/
-│   │   └── transit.py            # Pydantic models (102 lines)
-│   ├── services/
-│   │   ├── transit_service.py    # Core routing engine (1432 lines)
-│   │   ├── gtfs_service.py       # GTFS loader (182 lines)
-│   │   ├── geocoding.py          # Place search/nearby/enrich (591 lines)
-│   │   ├── images.py             # Wikipedia image service (39 lines)
-│   │   └── n8n_service.py        # n8n webhook proxy (151 lines)
-│   └── agents/
-│       └── llm_agent.py          # LLM integration (329 lines)
-├── frontend/
-│   ├── vite.config.ts            # Vite config (port 3000, proxy)
-│   ├── package.json              # Dependencies
-│   ├── tsconfig.json             # TypeScript config
+│   │   └── transit.py          # Pydantic models
+│   └── services/
+│       ├── transit_service.py  # Route engine (1027 lines)
+│       ├── gtfs_service.py     # GTFS loader
+│       ├── geocoding.py        # Place search
+│       ├── n8n_service.py      # n8n proxy
+│       └── images.py           # Image fetching
+├── frontend/                    # React TypeScript frontend
+│   ├── package.json
+│   ├── vite.config.ts
 │   └── src/
-│       ├── main.tsx              # React entry
-│       ├── App.tsx               # Root component (84 lines)
-│       ├── index.css             # All styles (625 lines)
-│       ├── types/index.ts        # TypeScript types (244 lines)
-│       ├── utils/helpers.ts      # Utility functions (123 lines)
-│       ├── services/api.ts       # API client (122 lines)
-│       ├── pages/MainPage.tsx    # Main layout (272 lines)
-│       └── components/
-│           ├── SearchPanel.tsx    # Place search + nearby (377 lines)
-│           ├── AToBPanel.tsx      # A-to-B routing (620 lines)
-│           ├── SegmentPanel.tsx   # Two-phase segment builder (663 lines)
-│           ├── TripPanel.tsx      # Trip planner placeholder (36 lines)
-│           ├── MapView.tsx        # Leaflet map (362 lines)
-│           ├── DiscoveryPanel.tsx # Place details (187 lines)
-│           └── NewsOverlay.tsx    # Travel news overlay (110 lines)
+│       ├── App.tsx
+│       ├── main.tsx
+│       ├── components/
+│       │   ├── AToBPanel.tsx   # Main route panel (886 lines)
+│       │   ├── MapView.tsx     # Leaflet map (362 lines)
+│       │   ├── SearchPanel.tsx # Search UI
+│       │   ├── DiscoveryPanel.tsx
+│       │   ├── TripPanel.tsx
+│       │   └── NewsOverlay.tsx
+│       ├── pages/
+│       │   └── MainPage.tsx    # App orchestrator
+│       ├── services/
+│       │   └── api.ts          # Axios API client
+│       ├── types/
+│       │   └── index.ts        # TypeScript interfaces
+│       └── utils/
+│           └── helpers.ts      # UI formatting utilities
 ├── ml/
-│   ├── topsis.py                 # TOPSIS scoring (standalone, 62 lines)
-│   ├── astar.py                  # A* pathfinding (standalone, 122 lines)
-│   └── data_preprocessor.py      # Data preprocessing (standalone)
-├── data_cache/
-│   ├── bmtc_gtfs.zip             # GTFS data
-│   ├── bmtc_all_stops_master.csv # BMTC bus stops (20k+)
-│   ├── bengaluru_metro_network.csv # Metro stations/lines
-│   ├── karnataka_railway_stations.json # 48 stations
-│   ├── kia_routes_fare_full.json # KIA airport routes
-│   ├── transit_fares.json        # Fare slabs
-│   ├── traffic_logs.csv          # Demo traffic data
-│   └── *.csv / *.json            # Other data files
-├── workflows/                    # n8n workflow JSON definitions
-│   ├── weather_traffic_check.json
-│   ├── ride_price_estimation.json
-│   ├── place_verification.json
-│   ├── place_reviews.json
-│   └── hotel_price_check.json
-└── scripts/                      # Utility scripts
+│   ├── topsis.py               # Multi-criteria decision making
+│   ├── astar.py                # A* pathfinding
+│   └── data_preprocessor.py    # CSV preprocessing
+├── data_cache/                  # Transit data files
+├── workflows/                   # n8n workflow JSONs
+└── scripts/                     # Test & utility scripts
 ```
 
 ---
 
-# 4. BACKEND CORE
+## 3. Data Sources & Transit Database
 
-## 4.1 FastAPI Application (`backend/main.py`)
+### 3.1 Overview
 
-The backend is a FastAPI application with CORS enabled for all origins. On startup:
+All transit data is loaded **in-memory** at startup from local files in `DATA_CACHE_DIR` (default: `./data_cache/`). There is no external database (no PostgreSQL, no MongoDB). This makes the app fast to start but means all data must be updated by replacing the source files.
 
-1. **Database initialization** (`db.initialize()`): Loads all transit data from CSV/JSON files in `data_cache/`. This includes:
-   - Metro stations and networks
-   - BMTC bus stops (with route lists)
-   - KIA Vayu Vajra routes
-   - Karnataka railway stations
-   - Transit fare slabs (metro, ordinary bus, AC Vajra)
-
-2. **GTFS loading** (`_ensure_gtfs()`): Loads BMTC GTFS data synchronously. This takes ~40 seconds and blocks startup. Loads shapes, stops, stop_times (50k row limit), trips, and routes.
-
-## 4.2 Configuration (`backend/core/config.py`)
-
-Pydantic `BaseSettings` class that reads from `.env` file:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `OPENROUTER_API_KEY` | "" | OpenRouter API key for LLM access |
-| `GEMINI_API_KEY` | "" | Gemini API key (fallback LLM) |
-| `N8N_WEBHOOK_URL` | "" | n8n webhook base URL |
-| `OSRM_BASE_URL` | "https://router.project-osrm.org" | OSRM routing server |
-| `LLM_PROVIDER` | "openrouter" | Primary LLM backend |
-| `OPENROUTER_MODEL` | "openai/gpt-4o-mini" | Primary LLM model |
-| `FUEL_PRICE_PER_LITER` | 110.0 | Petrol price (₹/liter) |
-| `PETROL_AVG_MILEAGE` | 15.0 | Average km/liter |
-| `BANGALORE_CENTER_LAT` | 12.9716 | City center latitude |
-| `BANGALORE_CENTER_LNG` | 77.5946 | City center longitude |
-| `DATA_CACHE_DIR` | "data_cache/" | Data directory path |
-| `DEBUG` | True | Debug mode |
-
-## 4.3 Database Singleton (`backend/core/database.py`)
-
-The `TransitDatabase` class is a singleton that loads and provides access to all transit data:
-
-### 4.3.1 Data Loading Methods
-
-| Method | Source File | What It Loads |
-|--------|-----------|---------------|
-| `_load_transit_fares()` | `transit_fares.json` | Metro, BMTC Ordinary, BMTC AC fare slabs |
-| `_load_metro_data()` | `bengaluru_metro_network.csv` | 100+ metro stations, 2 lines, distances, interchanges |
-| `_load_bus_stops()` | `bmtc_all_stops_master.csv` | 20,000+ BMTC bus stops with route lists |
-| `_load_kia_routes()` | `kia_routes_fare_full.json` | KIA Vayu Vajra airport bus routes with stop-wise fares |
-| `_load_railway_stations()` | `karnataka_railway_stations.json` | 48 Karnataka railway stations |
-
-### 4.3.2 Key Query Methods
-
-| Method | Description |
-|--------|-------------|
-| `find_nearby_bus_stops(lat, lng, radius_km)` | Returns bus stops within radius sorted by distance (max 20) |
-| `find_nearby_metro_stations(lat, lng, radius_km)` | Returns metro stations within radius sorted by distance |
-| `find_nearby_railway_stations(lat, lng, radius_km)` | Returns railway stations within radius (default 30km) |
-| `get_metro_fare(distance_km)` | Returns metro fare from slab table |
-| `get_bmtc_ordinary_fare(distance_km, passenger_type)` | Returns ordinary bus fare, supports child(50%) and senior(75%) discounts |
-| `get_bmtc_ac_fare(distance_km, passenger_type)` | Returns AC Vajra fare |
-| `get_metro_distance_between(stn_a, stn_b)` | Cached metro distance or calculated from sequence |
-| `get_metro_line_path(from_name, to_name)` | Returns sequential station coordinates for a metro line segment |
-| `find_stop_by_name(name)` | Finds a stop by exact name (bus then metro) |
-
-### 4.3.3 Metro Data Structure
-
-Each metro station has:
-- `name`: Station name
-- `line`: "Purple" or "Green"
-- `sequence`: Position on the line
-- `lat`, `lng`: Coordinates
-- `is_interchange`: Boolean (e.g., Majestic is interchange)
-- `distance_from_prev_km`: Distance from previous station
-
----
-
-# 5. TRANSIT SERVICE - THE ROUTING ENGINE
-
-## 5.1 Overview (`backend/services/transit_service.py`)
-
-This is the **heart of the application** (1432 lines). The `TransitService` class generates all routing options, including:
-
-1. **Full route plans** (`get_route_legs_public()`)
-2. **Segment builder options** (`get_segment_step_options()`)
-3. **Mini path options** (`get_mini_path_options()`)
-4. **OSRM path enrichment** (async path fetching)
-5. **TOPSIS scoring** for route ranking
-
-## 5.2 Helper Functions (Module Level)
-
-### `_safe(val, default=0.0)`
-Handles NaN, None, and Infinity values by returning a safe default.
-
-### `_ensure_gtfs()`
-Lazy-loads GTFS data on first call. Returns the GTFS loader singleton.
-
-### `_get_train_options(src_name, dst_name)`
-Normalizes station names and returns hardcoded train schedules. See Section 12 for details.
-
-## 5.3 Ride Types Pricing Table
-
-Used across multiple methods (`get_segment_step_options`, `get_mini_path_options`, reach_options, from_stop_options):
+### 3.2 Database Singleton (`backend/core/database.py`)
 
 ```python
-ride_types = [
-    ("cab",       "Uber Go / Ola Mini",     14/km, 3 min/km, ₹25 base, "🚕", 4 seats),
-    ("cab_xl",    "Uber XL / Ola XL",       20/km, 3 min/km, ₹40 base, "🚐", 6 seats),
-    ("auto",      "Auto",                   10/km, 5 min/km, ₹15 base, "🛺", 3 seats),
-    ("bike",      "Uber Moto / Rapido",     6/km,  2 min/km, ₹10 base, "🏍️", 1 seat),
-    ("cab_women", "Uber for Women / Ola for Women", 14/km, 3 min/km, ₹25 base, "👩", 4 seats),
-    ("cab_pet",   "Uber Pet",               17/km, 3 min/km, ₹30 base, "🐾", 4 seats),
-]
+class TransitDatabase:
+    # Singleton pattern via class variable
+    _instance = None
+    _initialized = False
+
+    # Data structures (all loaded in initialize())
+    metro_stations: list[dict]      # 52 stations
+    metro_lines: dict[str, list]    # "Purple Line", "Green Line"
+    bus_stops: dict[str, dict]      # ~9,783 stops keyed by name
+    kia_routes: dict[str, dict]     # Airport bus routes
+    transit_fares: dict             # Fare slabs
 ```
 
-**Pricing Formula**: `per_person = round(base_fare + distance × per_km_rate)`  
-**Total Fare**: `per_person × group_size`  
-**Filtering**: Ride is excluded if `group_size > capacity` or `total > budget`
+**Key methods:**
 
-## 5.4 Core Routing Methods
+| Method | Purpose |
+|--------|---------|
+| `initialize()` | Loads all data from files |
+| `find_nearby_bus_stops(lat, lng, radius_km)` | Returns bus stops within radius |
+| `find_nearby_metro_stations(lat, lng, radius_km)` | Returns metro stations within radius |
+| `find_stop_by_name(name)` | Fuzzy-match bus stop name |
+| `get_metro_line_path(from_name, to_name)` | Returns station-to-station coordinates on same metro line |
+| `get_bmtc_ordinary_fare(dist_km)` | Returns fare based on distance slab |
+| `get_bmtc_ac_fare(dist_km)` | Returns AC bus fare |
+| `get_metro_fare(dist_km)` | Returns metro fare |
 
-### `get_route_legs_public()`
-Generates complete multi-modal routes between source and destination:
+### 3.3 Data Files
 
-1. Calculates direct distance
-2. Calls all `_generate_*_routes()` methods:
-   - `_generate_bus_routes()` - Walk → bus → walk
-   - `_generate_metro_routes()` - Walk → metro → walk
-   - `_generate_metro_interchange_routes()` - Walk → metro(Line A) → interchange → metro(Line B) → walk
-   - `_generate_kia_routes()` - Walk → KIA bus → walk
-   - `_generate_multi_modal_routes()` - Bus → metro OR metro → bus
-3. Filters by budget (if specified)
-4. Scores each route with `_topsis_score()`
-5. Enriches legs with coordinates
-6. Sorts by score (descending) and returns top 8
+| File | Source | Size | Contents |
+|------|--------|------|----------|
+| `bengaluru_metro_network.csv` | Manual/curated | ~5KB | 52 stations with lat/lng, line, station_code |
+| `bmtc_all_stops_master.csv` | BMTC GTFS extract | ~1.5MB | 9,783 bus stops with lat/lng |
+| `bmtc_gtfs.zip` | Vonter/bmtc-gtfs (GitHub) | 47MB | Full GTFS: shapes, trips, stop_times, routes |
+| `transit_fares.json` | Manual/curated | ~2KB | Fare slabs for bus, metro, KIA |
+| `kia_routes_fare_full.json` | KIA website | ~20KB | Airport bus routes with stops & fares |
+| `bangalore_roads.geojson` | Curated | ~10KB | 18 major roads as LineStrings |
+| `traffic_logs.csv` | Simulated | ~50KB | Speed data for traffic overlay |
 
-### `_generate_bus_routes()`
-Finds nearest bus stop to source and destination, calculates walking distances, bus distance, fare, and creates a 3-leg route: walk → bus → walk. Generates both ordinary and AC Vajra variants.
+### 3.4 Metro Network
 
-### `_generate_metro_routes()`
-Finds nearest metro station to source and destination, calculates walking distances, metro distance, fare, and creates a 3-leg route: walk → metro → walk. Checks if same line for bonus score.
+**56 stations** across 2 lines (with interchange at Majestic):
 
-### `_generate_metro_interchange_routes()`
-Only when source and destination are on different metro lines. Finds interchange stations, creates a 4-leg route: walk → metro(L1) → interchange → metro(L2) → walk.
+| Line | Stations | Color | Length |
+|------|----------|-------|--------|
+| Purple Line | 37 stations | Purple | ~43km (Baiyappanahalli → Kengeri) |
+| Green Line | 29 stations | Green | ~30km (Nagasandra → Yelachenahalli) |
 
-### `_generate_kia_routes()`
-Matches source and destination stops against KIA Vayu Vajra route stop lists. Creates routes with stop-index-based fare calculation.
+Metro rail path data is stored as coordinate sequences per station pair within each line. The `get_metro_line_path(from, to)` method interpolates between consecutive stations on the same line.
 
-### `_generate_multi_modal_routes()`
-Generates bus→metro and metro→bus combination routes. For bus→metro: walks to bus stop, takes bus to metro station area, takes metro to destination metro station. For metro→bus: walks to metro station, takes metro, takes bus to destination area.
+### 3.5 BMTC Bus Network
 
-## 5.5 TOPSIS Scoring (`_topsis_score()`)
+- **9,783 bus stops** across Bengaluru
+- **4,359 routes** (from GTFS)
+- **~2.4M shape points** (from GTFS)
+- Fare slabs: Ordinary (₹5-25 based on distance slab), AC Vajra (₹7-40)
 
-Scoring function used to rank routes (score 10-99):
+### 3.6 GTFS Feed (`backend/services/gtfs_service.py`)
 
-| Criterion | Weight | Formula |
-|-----------|--------|---------|
-| Fare | 25% | `max(0, 100 - fare/10)` |
-| Time | 30% | `max(0, 100 - duration_minutes/2)` |
-| Walking | 15% | `max(0, 100 - walking_km × 15)` |
-| Comfort | 20% | Mode-dependent (metro=85, cab=85, bus=50, etc.) |
+The GTFS loader reads from `data_cache/bmtc_gtfs.zip` (47MB ZIP containing:
 
-**Bonuses**:
-- Budget savings: +10 if fare ≤ 40% budget, +5 if ≤ 70%
-- Over budget: -15 if over, -5 if > 90%
-- Cheap per-person (≤ ₹30): +5
-- Metro mode: +5
-- Known route numbers: +3
+| File | Records | Purpose |
+|------|---------|---------|
+| `shapes.txt` | ~2.4M points | Bus route road geometry |
+| `trips.txt` | ~190K trips | Trip-to-route mapping |
+| `stop_times.txt` | ~5M entries | Stop sequences per trip |
+| `stops.txt` | ~9,783 stops | Stop metadata |
+| `routes.txt` | ~4,359 routes | Route metadata |
 
-**Final**: `max(10, min(99, score))`
+**Key methods in GTFSLoader:**
 
-## 5.6 OSRM Path Integration
+```python
+gtfs_loader.load()  # Load all GTFS data (takes ~2-3 seconds on first call)
+gtfs_loader.get_shape_between_stops(from_name, to_name)
+    # Returns real bus road path between any two stop names
+    # Uses stop-to-shape index for O(1) lookups
+gtfs_loader.get_shape_by_route(route_short_name)
+    # Returns full shape for a given route number
+```
 
-### `get_osrm_path_between(slat, slng, dlat, dlng, profile)`
-Async method that:
-1. Checks in-memory cache (keyed by rounded coordinates + profile)
-2. Makes HTTP GET to OSRM API (5s timeout)
-3. Parses GeoJSON geometry from response
-4. Falls back to `_interpolate_path()` on failure
-
-### `_interpolate_path()`
-Simple linear interpolation between two points. Generates `num_points` evenly spaced coordinates. Used as fallback when OSRM is unavailable.
-
-### `_add_leg_paths(route)`
-Async enrichment that adds geometry to each leg of a route:
-- **Metro legs**: Uses `db.get_metro_line_path()` for station-to-station path
-- **Bus legs**: Uses `gtfs.get_shape_between_stops()` for bus shape geometry
-- **Walk legs**: OSRM walking profile
-- **Other legs**: OSRM driving profile
+**Loading strategy:** Lazy-loaded on first use (called by `_add_leg_paths`). Cached in memory for subsequent calls.
 
 ---
 
-# 6. THE SEGMENT BUILDER
+## 4. Backend Components
 
-## 6.1 Concept
+### 4.1 Configuration (`backend/core/config.py`)
 
-The segment builder breaks a journey into step-by-step segments, allowing the user to build a custom multi-modal route one piece at a time. Each step shows:
+**File:** `backend/core/config.py` (49 lines)
 
-1. **Where you are now** (current location or last stop)
-2. **Where you can go next** (direct to destination or via transit stops)
-3. **How to get there** (walk, cab, bus, metro, train)
+Reads settings from `.env` file using `pydantic-settings.BaseSettings`:
 
-## 6.2 Backend: `get_segment_step_options()`
-
-### Response Structure
-
-```json
-{
-  "from": {"lat": 12.97, "lng": 77.59, "name": "MG Road"},
-  "dest": {"lat": 12.93, "lng": 77.61, "name": "Koramangala"},
-  "direct_options": [
-    {"mode": "walk", "label": "Walk", "fare": 0, ...},
-    {"mode": "cab", "label": "Uber Go / Ola Mini", "fare": 87, ...},
-    {"mode": "auto", "label": "Auto", "fare": 59, ...},
-    ...
-  ],
-  "via_stops": [
-    {
-      "stop": {"name": "St Joseph Boys High School", "lat": ..., "lng": ..., "type": "bus"},
-      "reach_options": [
-        {"mode": "walk", "label": "Walk", "fare": 0, ...},
-        {"mode": "cab", "label": "Uber Go / Ola Mini to St Joseph Boys High School", "fare": 25, ...},
-        ...
-      ],
-      "from_stop_options": [
-        {"mode": "bus_ordinary", "route_number": "201K", "bus_times": [...], "fare": 12, ...},
-        {"mode": "bus_ac_vajra", "route_number": "201K", "bus_times": [...], "fare": 20, ...},
-        {"mode": "metro", "label": "Metro to {dest_metro}", ...},
-        {"mode": "walk", "label": "Walk to Destination", "fare": 0, ...},
-        {"mode": "cab", "label": "Uber Go / Ola Mini to Destination", "fare": 45, ...},
-        ...
-      ]
-    },
-    ...
-  ]
-}
+```python
+class Settings(BaseSettings):
+    APP_NAME: str = "Voyager"
+    APP_VERSION: str = "1.0.0"
+    DEBUG: bool = False
+    DATA_CACHE_DIR: str = "data_cache"
+    LLM_PROVIDER: str = "openrouter"
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+    GEMINI_API_KEY: str = ""
+    N8N_WEBHOOK_URL: str = ""
+    BANGALORE_CENTER_LAT: float = 12.9716
+    BANGALORE_CENTER_LNG: float = 77.5946
+    OSRM_BASE_URL: str = "https://router.project-osrm.org"
+    FUEL_PRICE_PER_LITER: float = 102.0
+    PETROL_AVG_MILEAGE: float = 15.0
 ```
 
-### 6.2.1 Direct Options Generation (lines 799-837)
+### 4.2 LLM Agent (`backend/agents/llm_agent.py`)
 
-1. **Walk** (if distance ≤ 5 km): `fare=0`, `duration=dist×12 min`
-2. **All ride types**: Priced using the ride_types table, filtered by group capacity and budget
+**File:** `backend/agents/llm_agent.py` (~300 lines)
 
-### 6.2.2 Via Stop Generation Order
+Orchestrates all AI-powered features:
 
-Stops are generated in this order:
+| Feature | Method | Provider | Purpose |
+|---------|--------|----------|---------|
+| AI Place Search | `search_places_llm()` | OpenRouter | Semantic place search as Nominatim fallback |
+| Place Verification | `verify_place()` | n8n → OpenRouter | Verify place exists and get details |
+| Travel Recommendations | `get_travel_recommendations()` | OpenRouter | Suggest transport modes and tips |
+| Live Prices | `get_live_prices()` | OpenRouter | Estimate Uber/Ola/Rapido fares |
+| Weather Impact | `get_weather_traffic_impact()` | n8n → OpenRouter | Weather + traffic conditions |
+| Travel News | `get_travel_news()` | OpenRouter | Generate travel alerts |
+| Place Enrichment | `enrich_place_info()` | OpenRouter | Generate review summary |
+| Current Events | `get_current_events()` | Web Search + LLM | Current events near a place |
 
-1. **Out-of-Bengaluru bus+cab combo** (if destination > 35km from Bangalore center): Creates single via stop with BMTC bus to farthest stop + cab rest of way
-2. **Nearby bus stops** (up to 4, within 1km): Each with reach + from options
-3. **Nearby metro stations** (up to 3, within 2km): Each with reach + from options
-4. **Railway stations** (up to 3, within 15km): Each with reach + from options
+**LLM calling strategy:**
+1. Try OpenRouter (GPT-4o-mini) → 10s timeout
+2. Fall back to Google Gemini → 10s timeout
+3. Return cached or None on all failures
 
-### 6.2.3 Bus Stop Via Stop Logic (lines 887-1025)
+**Caching:** 24-hour TTL cache for all LLM responses stored in a module-level dict.
 
-For each nearby bus stop:
+### 4.3 Geocoding Service (`backend/services/geocoding.py`)
 
-**Skip Conditions**:
-- Skip if: `dist > 2km AND no common bus routes AND stop-to-destination > 50km`
+**File:** `backend/services/geocoding.py` (~450 lines)
 
-**Reach Options**:
-- **Walk** (if dist ≤ 2 km)
-- **All ride types** (always available, filtered by capacity/budget)
+Combines multiple search strategies:
 
-**From Stop Options** (in order):
-1. **Bus route cards** (if `has_common` routes with destination area):
-   - For each common route number → individual card with ordinary + AC Vajra variants
-   - GTFS bus timings filtered for this specific route
-   - ***NEW: Only shown if bus_times are available (filtered out if no timings)***
-2. **Metro** to destination metro station (if within 2km of dest)
-3. **Walk** to destination (if dist ≤ 2km)
-4. **All ride types** to destination (always available)
+```
+search_places(query, lat, lng)
+  ├── 1. Check local transit DB (bus stops, metro stations, KIA routes)
+  ├── 2. OSM Nominatim API call (with India bounding box filter)
+  ├── 3. LLM AI fallback (semantic search)
+  └── 4. Merge & deduplicate results
+```
 
-### 6.2.4 Metro Station Via Stop Logic (lines 1027-1151)
+**Caching:** `SearchCache` class with 24-hour TTL, keyed by normalized query + location hash.
 
-For each nearby metro station:
+### 4.4 N8N Service (`backend/services/n8n_service.py`)
 
-**Skip Conditions**:
-- Skip if: `no dest metro nearby AND dist > 2km AND destination is outside Bengaluru`
+**File:** `backend/services/n8n_service.py` (~150 lines)
 
-**Reach Options**:
-- **Walk** (if dist ≤ 2 km)
-- **All ride types** (always available)
+Proxies requests to optional n8n workflows for:
 
-**From Stop Options** (in order):
-1. **Metro** to destination metro station
-2. **Bus route cards** from station to destination bus stops (ordinary + AC Vajra, with GTFS timings)
-3. **Walk** to destination (if ≤ 2km)
-4. **All ride types** to destination
+- **Place verification** → verifies place name/address via web search
+- **Hotel price checking** → scrapes hotel prices
+- **Weather/traffic check** → current weather + traffic conditions
+- **Ride price estimation** → Uber/Ola price scraping (DEPRECATED — now uses LLM)
+- **Place reviews** → scrapes review data
 
-### 6.2.5 Railway Station Via Stop Logic (lines 1153-1242)
+**Important:** n8n is **optional** and often unreachable. All n8n calls are wrapped in `asyncio.wait_for(timeout=5.0)` + try/except to prevent 500 errors.
 
-For each nearby railway station (within 15km):
+---
 
-**Reach Options**:
-- **Walk** (if dist ≤ 2km)
-- **All ride types** (always available)
+## 5. Frontend Components
 
-**From Stop Options** (in order):
-1. **Train options** (if destination railway station found within 30km):
-   - Each matching train from `_get_train_options()` generates a card with:
-     - Train number and name
-     - Departure and arrival times
-     - Computed duration
-     - Per-person fare: `max(15, round(dist × 0.8))`
-2. **Last-mile from destination station**:
-   - Walk (if dest station to actual dest ≤ 2km)
-   - All ride types from dest station to actual destination
+### 5.1 Component Hierarchy
 
-## 6.3 Frontend: SegmentPanel.tsx (663 lines)
+```
+App.tsx
+└── MainPage.tsx
+    ├── MapView.tsx (always visible)
+    ├── SearchPanel.tsx (toggle by mode)
+    ├── AToBPanel.tsx (A→B mode)
+    │   └── RouteCard.tsx (inline sub-component)
+    ├── TripPanel.tsx (Trip mode - stub)
+    ├── DiscoveryPanel.tsx (overlay on place select)
+    └── NewsOverlay.tsx (overlay)
+```
 
-### 6.3.1 Component State
+### 5.2 AToBPanel (`frontend/src/components/AToBPanel.tsx`)
+
+**Lines:** 886 — the most complex component.
+
+**State management:**
+
+| State | Type | Purpose |
+|-------|------|---------|
+| `sourceQuery`, `destQuery` | string | Input field values |
+| `sourceSuggestions`, `destSuggestions` | PlaceResult[] | Autocomplete dropdown |
+| `sourceLocation`, `destLocation` | [number, number] | Selected lat/lng (via props) |
+| `waypoints` | {lat,lng,query}[] | Intermediate stops |
+| `routes` | RouteOption[] | Planned routes from API |
+| `selectedRoute` | number \| null | Which route is selected |
+| `travelMode` | 'public' \| 'personal' \| 'walking' | Transport mode filter |
+| `routerView` | 'direct' \| 'segment' | Direct routes vs segment builder |
+| `prefs` | {budget?, groupSize} | User preferences |
+| `segmentStep` | SegmentStepData \| null | Current segment step data |
+| `segmentPath` | SegmentStepOption[] | Built segment path |
+| `hoveredSegmentOption` | SegmentStepOption \| null | For map hover |
+
+**Key flows:**
+
+1. **Direct route planning:** User sets source + dest → clicks "Find Routes" → `handlePlanRoute()` → `POST /api/routes/plan` → renders RouteCards sorted by score
+
+2. **Segment building:** User clicks "Segment Builder" → `handleStartSegmentBuilding()` → fetches `GET /api/routes/segment-step` from source → shows all options (direct + transit stops with reach/from-stop options) → user picks → adds to `segmentPath` → if arrives at stop, fetches next step from that stop → repeats until destination reached
+
+3. **News fetching:** After routes loaded, starts polling `GET /api/routes/news` every 30s → renders NewsOverlay
+
+4. **Route geometry:** `useEffect` emits `MapRouteGeometry[]` to parent whenever routes/segment/hover state changes → MapView renders polylines
+
+**RouteCard sub-component:**
+- Shows route type icon + label
+- Score badge with color (Excellent/Good/Fair/Poor/Avoid)
+- Stats: fare, duration, distance, walking distance
+- Expandable leg details with per-leg colors
+- Score bar visualization
+- Recommended ("Best") badge for top route
+
+### 5.3 MapView (`frontend/src/components/MapView.tsx`)
+
+**Lines:** 362
+
+**Rendering layers (bottom to top):**
+
+1. **TileLayer** (OSM standard tiles)
+2. **TrafficLayer** (toggleable overlay)
+3. **Route outline polylines** (white, thick — for visibility)
+4. **Route fill polylines** (colored — solid for transit, dashed for walking)
+5. **Transit stop markers** (CircleMarker — green for metro, blue for buses)
+6. **News markers** (colored circles with emoji popups)
+7. **User location marker** (custom divIcon)
+8. **Source/Destination markers** (custom divIcon with glow)
+9. **Place markers** (colored pins with popups)
+10. **Waypoint markers** (intermediate stop pins)
+
+**Polyline colors:**
+- Walk: `#94a3b8` (dashed `8, 6`)
+- Walk to bus/metro: `#94a3b8` (dashed)
+- Bus: `#3b82f6`
+- Metro: `#22c55e`
+- Cab/Car: `#f59e0b` / `#f97316`
+- Auto: `#ef4444`
+
+### 5.4 API Client (`frontend/src/services/api.ts`)
+
+**Lines:** 122
+
+Axios instance with:
+- `baseURL: '/api'` → proxied by Vite to backend
+- `timeout: 60000` (60 seconds — increased from 30s for route planning)
+
+### 5.5 TypeScript Types (`frontend/src/types/index.ts`)
+
+**Lines:** 244
+
+Key interfaces:
 
 ```typescript
 interface RouteOption {
@@ -920,116 +876,204 @@ The segment builder lets users construct a custom journey **progressively** thro
 
 **Backend:** `get_all_segments()` in `transit_service.py` — generates ALL chained segments at once in a flat array, linked via `next_segment_index`.
 
-**Endpoint:** `GET /api/routes/segment-step` in `routes.py` (lines 384-449)
+**Endpoint:** `GET /api/routes/all-segments` → returns `{ status, data: { source, dest, segments[], total_segments } }`
 
-**Frontend:** Segment building state in `AToBPanel.tsx`:
-- `segmentStep: SegmentStepData` — current step options
-- `segmentPath: SegmentStepOption[]` — chosen segments
+**Frontend:** `SegmentPanel.tsx` — renders progressive columns:
+- `chainState.activeSegIdx` — tracks which segment is currently active
+- `chainState.selectedDest` — which stop user picked in the current segment
+- `chainState.selectedTransit` — which transit option user picked
+- `chainState.selectedFinal` — which final mile option user picked
 
-### 8.3 Step Data Structure
+### 8.3 Data Structure
 
-Each step returns:
+Each segment is self-contained and reusable:
 
 ```json
 {
-  "from": { "lat": 12.97, "lng": 77.59, "name": "Your Location" },
-  "dest": { "lat": 12.93, "lng": 77.61, "name": "Destination" },
-  "direct_options": [ ... ],        // Walk + all ride types to destination
-  "via_stops": [
+  "segment_index": 0,
+  "from": { "name": "MG Road", "lat": 12.97, "lng": 77.59 },
+  "direct_options": [
+    { "mode": "walk", "fare": 0, "duration_minutes": 30, ... },
+    { "mode": "cab", "fare": 176, "duration_minutes": 8, ... }
+  ],
+  "destinations": [
     {
-      "stop": { "name": "Majestic", "lat": 12.97, "lng": 77.57, "type": "metro" },
-      "reach_options": [ ... ],      // How to get TO this stop
-      "from_stop_options": [ ... ]   // What to do FROM this stop
+      "stop": { "name": "Cubbon Park", "lat": 12.97, "lng": 77.59, "type": "bus" },
+      "distance_from_current": 0.3,
+      "reach_options": [
+        { "mode": "walk", "from": "MG Road", "to": "Cubbon Park", "fare": 0, "arrives_at_stop": true, ... },
+        { "mode": "cab", "from": "MG Road", "to": "Cubbon Park", "fare": 42, "arrives_at_stop": true, ... }
+      ],
+      "transit_options": [
+        {
+          "mode": "metro",
+          "from": "Cubbon Park",
+          "to": "BTM Layout",
+          "fare": 42,
+          "arrives_at_stop": true,
+          "transit_type": "metro",
+          "final_options": [ ... ],           // last-mile from BTM Layout to dest
+          "next_segment_index": 1             // if still >2km from dest, link to next segment
+        }
+      ]
     }
   ]
 }
 ```
 
-### 8.4 Ride Types Available
+### 8.4 Segment Chaining Logic
 
-All with per-person pricing × group_size, filtered by capacity:
+When a transit option's arrival point is **>2km from destination**:
+- A new segment is built from that arrival point
+- The transit option gets `next_segment_index: N`
+- The new segment has its own `from`, `direct_options`, `destinations[]`, etc.
+- The flat segments array can be navigated by following `next_segment_index`
 
-| Mode | Label | Base Fare | Per KM | Capacity | Icon |
-|------|-------|-----------|--------|----------|------|
-| `cab` | Uber Go / Ola Mini | ₹25 | ₹14/km | 4 | 🚕 |
-| `cab_xl` | Uber XL / Ola XL | ₹40 | ₹20/km | 6 | 🚐 |
-| `auto` | Auto Rickshaw | ₹15 | ₹10/km | 3 | 🛺 |
-| `bike` | Uber Moto / Rapido | ₹10 | ₹6/km | 1 | 🏍️ |
-| `cab_women` | Uber for Women | ₹25 | ₹14/km | 4 | 👩 |
-| `cab_pet` | Uber Pet | ₹30 | ₹17/km | 4 | 🐾 |
+When a transit option's arrival point is **≤2km from destination**:
+- `final_options[]` is populated with walk + rides from arrival to destination
+- No next segment is generated
 
-**Capacity filtering:** If `group_size > capacity`, the option is hidden. E.g., a group of 5 won't see Auto (capacity 3) or Bike (capacity 1).
+### 8.5 Column Layout (Frontend)
 
-### 8.5 Transit Stop Types
-
-| Type | Source | Search Radius | Max Shown |
-|------|--------|---------------|-----------|
-| `bus` | `db.find_nearby_bus_stops()` | 1.0 km | 4 |
-| `metro` | `db.find_nearby_metro_stations()` | 2.0 km | 4 |
-
-Each stop provides:
-- `reach_options`: Walk (≤2km) + all ride types to reach that stop
-- `from_stop_options`: Transit rides (Bus/Metro) to destination area + all ride types direct to destination
-
-### 8.6 Transit Ride Options
-
-**Bus rides:** Between nearby source stop and destination-area stops, using BMTC fare calculation:
-- `per_person = max(10, get_bmtc_ordinary_fare(distance))`
-
-**Metro rides:** Between nearby source station and destination-area stations:
-- `per_person = max(15, distance × 3)`
-
-### 8.7 Frontend Flow
+The SegmentPanel renders columns left to right as user makes selections:
 
 ```
-User clicks "Segment Builder" button
-  → handleStartSegmentBuilding()
-    → fetchStepFrom(source_lat, source_lng, source_name)
-      → GET /api/routes/segment-step?from=source&...
-      → setSegmentStep(response.step)
-    
-User sees:
-  [Direct Options] [Transit Stop 1] [Transit Stop 2] ...
-
-User clicks "Walk to Majestic" (reach_option)
-  → handlePickSegmentOption(option)
-    → setSegmentPath([...prev, option])  // adds to path
-    → If option.arrives_at_stop == true:
-        fetchStepFrom(option.to_lat, option.to_lng, option.to)
-        // Loads next step from Majestic station
-    → Else (direct to destination):
-        setSegmentStep(null)  // route complete
-
-At next step from Majestic:
-  User sees options from Majestic to destination
-  → Repeat until destination reached
+┌─────────────────┐  ┌──────────────────────┐  ┌────────────────────┐  ┌──────────────────┐
+│ 🚕 DIRECT       │  │ 🚏 REACH A STOP      │  │ 🚌 TRANSIT:        │  │ 🏁 FINAL MILE    │
+│ (from segment)  │  │ (from segment)        │  │ Cubbon Park        │  │ to Lalbagh       │
+│                 │  │                       │  │                    │  │                  │
+│ Walk 30min ₹0   │  │ 📍 From: MG Road      │  │ Metro to BTM Layt  │  │ Walk 10min ₹0    │
+│ Cab 8min ₹176   │  │ ┌─────────────────┐   │  │                   │  │ Auto 5min ₹25    │
+│ Auto 22min ₹120 │  │ │ Cubbon Park      │   │  │ 🏁 5 final opts    │  │ Cab 3min ₹42     │
+│                 │  │ │ 0.3km away       │   │  │                    │  │                  │
+│                 │  │ │ Walk 4min ₹0     │   │  │                    │  │                  │
+│                 │  │ │ Cab 2min ₹42     │   │  │                    │  │                  │
+│                 │  │ └─────────────────┘   │  │                    │  │                  │
+│                 │  │ ┌─────────────────┐   │  │                    │  │                  │
+│                 │  │ │ Vidhana Soudha   │   │  │                    │  │                  │
+│                 │  │ │ (metro) 1.2km    │   │  │                    │  │                  │
+│                 │  │ │ Walk 14min ₹0    │   │  │                    │  │                  │
+│                 │  │ └─────────────────┘   │  │                    │  │                  │
+└─────────────────┘  └──────────────────────┘  └────────────────────┘  └──────────────────┘
 ```
 
-### 8.8 Map Integration
+**Column visibility rules:**
+- **Column 0 (DIRECT):** Always shown when segment has direct_options
+- **Column 1 (REACH):** Always shown when segment has destinations
+- **Column 2 (TRANSIT):** Appears when user selects a destination → shows its transit_options
+- **Column 3 (FINAL):** Appears when user selects a transit with final_options
+- **Next Segment columns:** When transit has `next_segment_index`, clicking it switches to that segment's columns (fresh Column 0-1-2 for the new "from" location)
 
-- Each chosen segment renders as a colored polyline (cycling through SEGMENT_COLORS)
-- Transit stops are shown as CircleMarkers on the map:
-  - Green circles for metro stations
-  - Blue circles for bus stops
-  - Popup shows stop name
-- Hovering over an option highlights its path in yellow
+### 8.6 Frontend State Machine
 
-### 8.9 State Reset
+```
+IDLE: no data loaded
+  → fetch all-segments API → DATA_LOADED
 
-- User can reset and start over at any time
-- Each step's options are independently fetched and cached
-- Double-call prevention via `segmentBuildingRef` ref
+DATA_LOADED:
+  Shows Column 0 (Direct) + Column 1 (Destinations)
+  User clicks reach_option → DEST_SELECTED
 
-### 8.10 What's Missing / Improvements Needed
+DEST_SELECTED:
+  Shows Column 2 (Transit options for that stop)
+  User clicks transit_option →
+    if has next_segment_index → SEGMENT_CHAIN (switch to next segment)
+    if has final_options → TRANSIT_SELECTED
 
-1. **Editable segments**: User cannot go back and change a previous segment's choice
-2. **More transit stop info**: Show bus route numbers and metro lines at each stop
-3. **Compare vs direct routes**: Show how the custom-built route compares to the automatically planned ones
-4. **Intermediate stops**: Allow adding intermediate destinations (not just transit stops)
-5. **Timeline view**: Show the route as a timeline with departure/arrival times
-6. **GTFS schedule-based transit**: Currently bus/metro times are estimated (distance/speed), not based on actual GTFS schedules
-7. **Real-time arrival data**: No GTFS-RT integration yet
-8. **Path builder improvement**: After building segments, automatically find the best combined transit route suggestion
+TRANSIT_SELECTED:
+  Shows Column 3 (Final mile options)
+  User clicks final_option → JOURNEY_COMPLETE
+
+SEGMENT_CHAIN:
+  activeSegIdx updates to next_segment_index
+  Shows NEW Column 0 (Direct from new from-location)
+  + Column 1 (Destinations near new location)
+  User repeats the flow
+
+JOURNEY_COMPLETE:
+  Shows full journey summary with timeline
+  "Start Journey" button enables GPS tracking
+```
+
+### 8.7 Go Back / Reset
+
+The user can go back at any point:
+- **From Final →** deselects final, shows transit options again
+- **From Transit →** deselects transit, shows destinations again
+- **From Dest →** deselects dest, shows all destinations
+- **From segment N →** goes back to segment N-1
+
+### 8.8 Map Path Display
+
+Each selected option renders on the map:
+- **Colored polylines** cycling through SEGMENT_COLORS
+- **Circle markers** at transit stops
+- **Yellow highlight** on hovered option
+- Path coordinates are either OSRM real roads or interpolated paths
+
+### 8.9 Ride Types & Pricing
+
+All rides priced per-person × group_size, filtered by capacity:
+
+| Mode | Label | Base | Per KM | Capacity |
+|------|-------|------|--------|----------|
+| `walk` | Walk | ₹0 | — | ∞ |
+| `cab` | Uber Go / Ola Mini | ₹25 | ₹14/km | 4 |
+| `cab_xl` | Uber XL / Ola XL | ₹40 | ₹20/km | 6 |
+| `auto` | Auto Rickshaw | ₹15 | ₹10/km | 3 |
+| `bike` | Uber Moto / Rapido | ₹10 | ₹6/km | 1 |
+
+**Live pricing overlay:** LLM agent fetches real-time Ola/Uber/Rapido prices (8s timeout). If available, these override the calculated fares and show provider name + ETA.
+
+### 8.10 Transit Types
+
+| Type | Source | Search Radius | Max |
+|------|--------|---------------|-----|
+| `bus` | `find_nearby_bus_stops()` | 1.0 km | 6 |
+| `metro` | `find_nearby_metro_stations()` | 2.0 km | 4 |
+| `railway` | `find_nearby_railway_stations()` | 15 km | 3 |
+
+**Transit pricing:**
+- **Bus:** `max(6, get_bmtc_ordinary_fare(distance))` per person using slab-based fares
+- **Metro:** `distance × ₹3` per person, minimum ₹15
+- **Train:** `distance × ₹0.8` per person, minimum ₹15
+
+**Transit filtering:**
+- Budget check: skip if `fare × group_size > budget`
+- Bus routes: only show when common routes exist between stop and dest-area stop
+- Metro: only when stop or dest supports metro connectivity
+- Train: only for long-distance journeys (>40km or outside Bengaluru)
+- GTFS bus timings: filtered by current time (shows next available buses)
+
+### 8.11 Custom Waypoints
+
+Users can add custom intermediate stops (not just transit stops):
+1. Type a place name in the search box
+2. Select from suggestions
+3. System fetches fresh segment data from that location
+4. New columns appear showing options from the custom waypoint
+
+### 8.12 GPS Live Tracking
+
+When journey is complete:
+1. User clicks "▶ Start Journey"
+2. Browser requests GPS permission (`watchPosition`)
+3. Green live marker appears on map
+4. Tracks user's progress in real-time
+5. Button shows "🟢 Tracking" while active
+
+### 8.13 What's Missing / Next Improvements
+
+1. **Multi-segment chaining isn't working for short routes** — transit options that arrive within 2km of dest show final_options but don't chain to next segment. Need to handle "transit to nearby area, then more transit" for all routes.
+2. **Transit options too few** — many bus stops show 0 transit options because no common bus routes found. Need fallback transit (metro, other buses).
+3. **Edit previous segment** — user cannot go back and change a choice without resetting.
+4. **Route comparison** — compare custom-built route vs auto-generated routes.
+5. **Schedule integration** — use GTFS stop_times for departure/arrival predictions.
+6. **Multiple route suggestions** — after each step, suggest 2-3 best continuations.
+7. **Time constraints** — "arrive by X" or "depart at Y" filtering.
+8. **Real-time transit** — GTFS-RT for live bus positions.
+9. **Intermediate destinations** — better support for non-transit waypoints.
+10. **Visual timeline** — Gantt-chart view of entire journey.
 
 ---
 
@@ -1208,203 +1252,85 @@ Roads are rendered in order of importance (NH → SH → major arterial → othe
 
 ---
 
-# 21. ML MODULES (STANDALONE)
+## 12. ML & Optimization
 
-## 21.1 TOPSIS (`ml/topsis.py`)
+### 12.1 TOPSIS Class (`ml/topsis.py`)
 
-A standalone implementation of the TOPSIS (Technique for Order Preference by Similarity to Ideal Solution) multi-criteria decision-making algorithm.
+An independent implementation of the TOPSIS multi-criteria decision-making algorithm:
 
-**Criteria weights** (not used by backend):
-- Cost: 0.25
-- Time: 0.20
-- Comfort: 0.15
-- Safety: 0.15
-- Walking Distance: 0.10
-- Availability: 0.10
-- Weather Impact: 0.05
+```python
+class Topsis:
+    def __init__(self, weights: dict = None):
+        # Default weights: cost=0.3, time=0.25, comfort=0.15,
+        # safety=0.1, walking_distance=0.1, availability=0.05,
+        # weather_impact=0.05
+    def score(self, alternatives: list[dict]) -> list[float]:
+        # Normalize → Weight → Ideal best/worst → Distance → Score
+```
 
-**Status**: NOT connected to the backend. The backend uses its own inline `_topsis_score()` method.
+The backend's `_topsis_score()` is a simpler implementation tuned specifically for Bengaluru transit routes.
 
-## 21.2 A* Pathfinder (`ml/astar.py`)
+### 12.2 A* Pathfinder (`ml/astar.py`)
 
-A standalone A* pathfinding algorithm that:
-- Builds a graph from metro stations (same-line edges weighted by distance)
-- Adds bus stop edges (within 15km)
-- Adds interchange edges (metro-bus within 1.5km)
-- Uses Haversine distance as heuristic
+Builds a transit graph from metro + bus stop data and finds shortest paths:
 
-**Status**: NOT connected to the backend. The backend uses a different approach (nearest-stop + common routes).
+```python
+class AStarPathfinder:
+    def build_graph(self, metro_stations, bus_stops):
+        # Nodes: all stations and stops
+        # Edges: walking between nearby nodes + transit connections
+    
+    def find_path(self, source_lat, source_lng, dest_lat, dest_lng):
+        # A* shortest path with haversine heuristic
+        # Returns list of (node, mode, cost) tuples
+```
 
-## 21.3 Data Preprocessor (`ml/data_preprocessor.py`)
+Currently this is a standalone module not yet integrated into the main route planner.
 
-Standalone utilities for data preprocessing. Not integrated.
+### 12.3 Data Preprocessor (`ml/data_preprocessor.py`)
+
+Cleans raw CSV files and outputs processed versions:
+
+```python
+class DataPreprocessor:
+    def clean_metro_csv(input_path, output_path)
+    def clean_bus_stops_csv(input_path, output_path)
+```
+
+Used during initial data setup, not in the live application.
 
 ---
 
-# 22. GEOCODING / PLACE SEARCH
+## 13. Current State & Known Issues
 
-## 22.1 GeocodingService (`backend/services/geocoding.py`)
+### 13.1 What Works
 
-Three-tier place search:
+- ✅ Full A→B route planning with all transport modes
+- ✅ Real road geometry for car routes (OSRM, 575+ coords)
+- ✅ Real GTFS bus route geometry (instant, no HTTP)
+- ✅ Real metro rail paths (station-to-station line data)
+- ✅ Walking paths with OSRM (dashed polylines)
+- ✅ Segment-by-segment custom route builder
+- ✅ Traffic overlay with congestion colors
+- ✅ Ride price estimates (LLM-generated)
+- ✅ AI travel recommendations with weather context
+- ✅ Place search (OSM + LLM fallback)
+- ✅ Place enrichment (reviews, images, hotels)
+- ✅ Travel news & alerts
+- ✅ Budget filtering (total budget for group)
+- ✅ Group size ride capacity filtering
 
-1. **OpenStreetMap (Nominatim)**: Primary source for places
-2. **AI (LLM)**: Fallback for OSM failures, also used for smart suggestions
-3. **Database (DB bus stops/metro)**: Additional local results
+### 13.2 Performance Profile
 
-**Search Flow**:
-1. Check cache (24-hour TTL by query + lat/lng)
-2. Run OSM + AI + DB searches in parallel
-3. Deduplicate by coordinate proximity
-4. Return combined results
+| Operation | Typical Time | Bottleneck |
+|-----------|-------------|------------|
+| Route planning | ~22-27s | OSRM calls + GTFS loading + LLM calls |
+| Segment step fetch | ~5-10s | OSRM path enrichment for all options |
+| Place search | ~2-3s | OSM Nominatim API |
+| LLM call | ~3-8s | OpenRouter API rate |
+| GTFS load | ~2-3s | ZIP parsing + indexing (once) |
 
-**Nearby Search**:
-- Uses Overpass API for OSM data with type-specific tags
-- Adds nearby bus stops and metro stations from DB
-- Falls back to AI search
-
-**Enrichment**:
-- Images via Wikipedia API
-- Hotel prices via n8n webhook
-- Reviews via n8n → LLM web search → LLM generation
-
-## 22.2 Cache (`SearchCache`)
-
-- TTL-based cache (default 24 hours)
-- Keyed by `query` or `query:lat:lng`
-- Implemented as simple dict with timestamps
-
----
-
-# 23. MAP AND VISUALIZATION
-
-## 23.1 Leaflet Map (`MapView.tsx`)
-
-**Features**:
-- OpenStreetMap tiles (via Leaflet default tile URL)
-- Dark theme (CSS overrides)
-- Multiple marker types (colored, emoji-labeled)
-- Route polylines with colored segments
-- Traffic congestion overlay (color-coded: green < 30%, yellow < 50%, orange < 70%, red ≥ 70%)
-- News markers with impact-based coloring
-
-**Controls**:
-- Zoom to user location
-- Toggle traffic layer
-- Marker click for place details
-- Route geometry updates via props
-
-## 23.2 Traffic Layer
-
-Fetches from `/api/routes/traffic-overlay` on map move (800ms debounce). Returns GeoJSON with color-coded road segments based on speed/congestion data from `traffic_logs.csv`.
-
----
-
-# 24. FRONTEND UI DETAILS
-
-## 24.1 Dark Theme (`index.css`)
-
-CSS Variables for the dark theme:
-```css
---bg-primary: #0f172a;
---bg-secondary: #1a2332;
---bg-card: #1e293b;
---text-primary: #e2e8f0;
---text-secondary: #94a3b8;
---accent: #3b82f6;
---success: #22c55e;
---warning: #f59e0b;
---danger: #ef4444;
-```
-
-## 24.2 Mode Tabs
-
-Three modes in sidebar:
-- **Search**: Place search and nearby exploration
-- **A-to-B**: Route planning between two points
-- **Trip**: Multi-destination trip planner (placeholder)
-
-## 24.3 Responsive Layout
-
-- Sidebar: 420px fixed width
-- Map: fills remaining space
-- Segment Panel: bottom sheet (max-height 65vh)
-- Panels scroll independently
-
-## 24.4 Helper Functions (`helpers.ts`)
-
-| Function | Purpose |
-|----------|---------|
-| `getModeIcon(mode)` | Maps 30+ mode strings to emojis |
-| `getModeLabel(mode)` | Maps mode strings to human labels |
-| `getPlaceIcon(placeType, isRecommended)` | Place type to emoji |
-| `formatDuration(minutes)` | "Xh Ym" or "X min" |
-| `formatRupees(amount)` | "₹X.XX" |
-| `getScoreColor(score)` | Color based on score range |
-| `getScoreLabel(score)` | Text label for score |
-| `getPinColor(isRecommended, score)` | Marker pin color |
-
----
-
-# 25. DEVELOPMENT SETUP AND RUNNING
-
-## 25.1 Prerequisites
-
-- Python 3.12+
-- Node.js 18+
-- npm or yarn
-
-## 25.2 Environment Setup
-
-1. Create `.env` file in project root:
-```
-OPENROUTER_API_KEY=sk-or-v1-...
-GEMINI_API_KEY=...
-N8N_WEBHOOK_URL=http://localhost:5678
-```
-
-2. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Install frontend dependencies:
-```bash
-cd frontend
-npm install
-```
-
-## 25.3 Running the Application
-
-```powershell
-# Terminal 1: Backend
-cd VOYGAR
-python -m uvicorn backend.main:app --reload --port 8000
-
-# Terminal 2: Frontend
-cd VOYGAR/frontend
-npx vite --port 3000
-```
-
-## 25.4 Access Points
-
-- Frontend UI: http://localhost:3000
-- Backend API: http://localhost:8000
-- Swagger Docs: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-## 25.5 Running n8n (Optional)
-
-```bash
-n8n start --port=5678
-```
-
-Then import workflows from the `workflows/` directory.
-
----
-
-# 26. KNOWN ISSUES AND LIMITATIONS
-
-## 26.1 Performance Issues
+### 13.3 Known Issues
 
 | Issue | Severity | Cause | Status |
 |-------|----------|-------|--------|
@@ -1429,101 +1355,140 @@ Then import workflows from the `workflows/` directory.
 
 ## 14. Roadmap & Future Work
 
-### 14.1 Short Term (Next Sprints)
+### 14.1 Recently Added Features (July 2026)
 
-#### P0 — Critical
+1. **Progressive multi-column segment UI** — Replaced old two-phase segment builder with progressive column layout (1 to N columns based on journey depth)
+2. **Chained segments** — Backend generates flat segments array with `next_segment_index` linking; transit arrival points become new segments
+3. **LLM live pricing overlay** — Real-time Ola/Uber/Rapido prices fetched via LLM agent and overlaid on direct options and reach options (8s timeout)
+4. **GPS live tracking** — "Start Journey" button triggers browser GPS; green live marker tracks position
+5. **Custom waypoints** — Search + add intermediate stops; fresh segment data fetched from custom location
+6. **GTFS bus timing expansion** — From 5 to 20 departure times per stop (100K stop times global limit)
+7. **Railway station integration** — Train transit options for long-distance routes with departure/arrival times
+8. **Parallel OSRM path fetching** — All option paths fetched via `asyncio.gather` for speed
+9. **Map resize on panel open/close** — `invalidateSize()` call when segment panel toggles
+10. **Budget/group-size filtering** — Applied at every transit and reach option
 
-1. **Route planning speed optimization**
-   - Preload GTFS data at startup (not lazy)
-   - Add connection pooling to OSRM client
-   - Reduce OSRM timeout from 5s to 3s
-   - Cache common OSRM routes locally
-   - Target: <15s for typical route plan
+### 14.2 Critical Issues to Fix Now
 
-2. **Segment builder enhancements**
-   - Allow editing/removing previous segment choices
-   - Show intermediate costs at each step
-   - Add "Auto-complete" to find best transit from current path
-   - Show bus route numbers and metro lines in stop details
-   - Display segment timelines
+#### P0 — Must Fix
+
+1. **Transit options too few** — Many bus stops show 0 transit options because no common routes found with dest-area stops. Need fallback: if no direct bus, show nearby metro connectivity, or other area buses, or at minimum a "no transit available" message.
+   - Fix: For bus stops without common routes, search for nearby metro stations (1km from stop) and show metro transit instead.
+   - Fix: For ANY stop type, always generate at minimum any transit option (don't let transit_options be empty).
+
+2. **Chained segments not generating for short routes** — When transit arrival is within 2km of dest, only final_options are generated. But user may want to see MORE transit from that area going closer. Need to generate next segment even when close, if there are more transit options available.
+   - Fix: Change threshold from 2km to 0.5km for chaining, or always generate next segment when any transit option exists from the arrival point.
+
+3. **Backend `needs_next_segment` flag leaking** — This backend-only key should be stripped before returning to frontend.
+
+#### P1 — High Priority
+
+4. **GTFS loading too slow** — 41s synchronous at startup. Need async loading or progress indicator.
+5. **OSRM timeout handling** — Some paths fail silently. Need retry logic with fallback interpolation.
+6. **Live price reliability** — 8s LLM call sometimes times out. Need caching and fallback pricing.
+7. **Frontend state machine bugs** — HandlePickTransit/HandleGoBack logic needs verification with chained segments.
+8. **Transit column should always show** — Even when transit_options is empty, show a message instead of hiding the column.
+
+### 14.3 Short Term (Next Sprints)
+
+#### P2 — Important
+
+1. **Segment builder — edit mode**
+   - Allow clicking a previous segment to change its option
+   - Recalculate downstream when a segment changes
+   - Keep all other segments intact
+
+2. **Route comparison**
+   - After building a custom route, compare score against auto-generated direct routes
+   - Show time/cost differences
+   - Highlight which is better and why
 
 3. **GTFS schedule integration**
    - Load GTFS stop_times.txt for actual bus timings
    - Show departure/arrival times for bus legs
    - Filter routes by time of day
+   - Show "next 3 buses" with actual times
 
-#### P1 — High
+4. **Better transit coverage**
+   - For every bus stop, find alternative transit if no direct bus:
+     - Walk to nearest metro station → metro transit
+     - Walk to another bus stop with connectivity → bus transit
+   - Add KIA bus routes as transit options (for airport routes)
+   - Add auto-rickshaw as transit (not just reach)
 
-4. **Search quality improvements**
-   - Restrict OSM Nominatim to Bengaluru region (current India bbox too broad)
-   - Add Bangalore-specific place synonyms database
+5. **UI/UX polish**
+   - Mobile-responsive column layout
+   - Loading skeletons for columns
+   - Smooth column appearance animation
+   - Route comparison table view
+   - Share route link
+
+6. **Search quality**
+   - Restrict OSM Nominatim to Bengaluru region
+   - Add Bangalore-specific place synonyms
    - Prioritize transit stops in search results
 
-5. **Path enrichment reliability**
-   - Add OSRM request queuing with 200ms delay between calls
-   - Cache more aggressively (persistent disk cache)
-   - Add more interpolated path points (12 → 24 for smoother curves)
-
-6. **Ride price estimates**
-   - Integrate with Ola/Uber affiliate APIs if available
-   - Add Rapido bike taxi pricing
+7. **Ride price estimates**
+   - Cache LLM price results (5 min TTL)
    - Show price ranges instead of single estimates
    - Add women-only ride options
 
-#### P2 — Medium
-
-7. **UI/UX polish**
-   - Mobile-responsive layout
-   - Dark mode consistency
-   - Loading skeletons instead of spinners
-   - Route comparison table view
-   - Share route link functionality
+#### P3 — Medium Priority
 
 8. **Multi-stop trip planning**
    - Complete the TripPanel component
    - Support 3+ destination trips
    - Optimize visit order for multi-stop routes
 
-9. **Offline mode**
-   - Cache transit data in IndexedDB
-   - Basic route planning without backend
-   - PWA support
+9. **Time constraints**
+   - "Arrive by X" or "depart at Y" filtering
+   - Show estimated arrival times based on current time
+   - Filter out options that miss the deadline
 
-### 14.2 Long Term (Future Versions)
+10. **Multiple route suggestions per step**
+    - After each step, suggest 2-3 best continuations based on TOPSIS
+    - Show score breakdown for each option
 
-#### P3 — Nice to Have
+11. **Offline mode**
+    - Cache transit data in IndexedDB
+    - Basic route planning without backend
+    - PWA support
 
-10. **Real-time features**
+### 14.4 Long Term (Future Versions)
+
+#### P4 — Nice to Have
+
+12. **Real-time features**
     - GTFS-RT for live bus positions
     - Live metro train tracking
     - Real-time traffic from Google Maps API
     - Live ride availability (not just prices)
 
-11. **Advanced routing**
-    - Isochrone maps (show reachable areas within N minutes)
+13. **Advanced routing**
+    - Isochrone maps (reachable areas within N minutes)
     - Environmentally-friendly routing (carbon emissions)
     - Accessibility routing (wheelchair-friendly)
     - Scheduled departure optimization
 
-12. **User features**
+14. **User features**
     - User accounts with saved routes
     - Route history and favorites
     - Recurring commute planning
     - Crowd-sourced route feedback
 
-13. **Data expansion**
+15. **Data expansion**
     - Add local train (Bengaluru suburban)
     - Add auto-rickshaw stand locations
     - Add cycle sharing stations
     - Expand to other Indian cities (Chennai, Hyderabad, Mumbai)
 
-14. **ML & AI improvements**
+16. **ML & AI improvements**
     - Train TOPSIS weights from user feedback
     - Predictive traffic modeling
     - Personalized route recommendations
     - Anomaly detection (unusual delays, route disruptions)
 
-### 14.3 Infrastructure Improvements
+### 14.5 Infrastructure Improvements
 
 | Area | Current | Target |
 |------|---------|--------|
@@ -1535,23 +1500,6 @@ Then import workflows from the `workflows/` directory.
 | CI/CD | None | GitHub Actions |
 | Documentation | This file | API docs + component storybook |
 
-### 14.4 Segment Builder — Detailed Roadmap
-
-**Current state:** ✅ Working — user can build multi-stop routes step-by-step with all transport options, filtered by group size and budget
-
-**Next improvements in order:**
-
-1. **Edit mode** — Allow clicking a previous segment to change its option, then recalculate downstream
-2. **Route comparison** — After building a custom route, compare its score against the auto-generated direct routes
-3. **Intermediate destination support** — Allow adding actual places (not just transit stops) as waypoints
-4. **Schedule integration** — Show departure/arrival times if GTFS stop_times are loaded
-5. **Multiple route suggestions** — After each step, suggest 2-3 best continuations based on TOPSIS
-6. **Price breakdown** — Show running total + per-person with a progress bar against budget
-7. **Time constraint** — Allow setting "arrive by" or "depart at" time
-8. **Saved segments** — Allow saving a built route as a template for future use
-9. **Visual timeline** — Gantt-chart style view of the entire journey timeline
-10. **Map integration** — Show only the relevant segment path on hover, highlight stops more prominently
-
 ---
 
 ## 15. Appendix: File Reference
@@ -1561,15 +1509,15 @@ Then import workflows from the `workflows/` directory.
 | File | Lines | Purpose |
 |------|-------|---------|
 | `backend/main.py` | 54 | App entry point, CORS, routers |
-| `backend/api/routes.py` | 570 | Route planning endpoints |
+| `backend/api/routes.py` | ~690 | Route planning + all-segments endpoints |
 | `backend/api/search.py` | ~200 | Search & discovery endpoints |
-| `backend/services/transit_service.py` | 1027 | Core route engine, OSRM, segment builder |
-| `backend/services/gtfs_service.py` | 141 | BMTC GTFS loader |
+| `backend/services/transit_service.py` | ~1800 | Core route engine, OSRM, chained segment builder |
+| `backend/services/gtfs_service.py` | ~200 | BMTC GTFS loader (100K stop times limit) |
 | `backend/services/geocoding.py` | ~450 | Place search + enrichment |
-| `backend/services/llm_agent.py` | ~300 | LLM orchestration |
+| `backend/services/llm_agent.py` | ~350 | LLM orchestration (live pricing, recommendations) |
 | `backend/services/n8n_service.py` | ~150 | n8n webhook proxy |
 | `backend/services/images.py` | ~50 | Wikipedia image fetcher |
-| `backend/core/database.py` | ~300 | In-memory transit DB |
+| `backend/core/database.py` | ~300 | In-memory transit DB (bus/metro/railway) |
 | `backend/core/config.py` | 49 | Settings from .env |
 | `backend/models/transit.py` | ~100 | Pydantic models |
 
@@ -1578,16 +1526,17 @@ Then import workflows from the `workflows/` directory.
 | File | Lines | Purpose |
 |------|-------|---------|
 | `frontend/src/App.tsx` | ~50 | Root component |
-| `frontend/src/pages/MainPage.tsx` | ~200 | App orchestrator |
-| `frontend/src/components/AToBPanel.tsx` | 886 | Main route panel |
-| `frontend/src/components/MapView.tsx` | 362 | Leaflet map |
+| `frontend/src/pages/MainPage.tsx` | ~313 | App orchestrator (GPS tracking, map resize) |
+| `frontend/src/components/SegmentPanel.tsx` | ~620 | Progressive multi-column segment UI |
+| `frontend/src/components/AToBPanel.tsx` | ~500 | Main A→B route panel |
+| `frontend/src/components/MapView.tsx` | ~400 | Leaflet map (segment paths, live marker) |
 | `frontend/src/components/SearchPanel.tsx` | ~250 | Search UI |
 | `frontend/src/components/DiscoveryPanel.tsx` | ~150 | Place details |
 | `frontend/src/components/NewsOverlay.tsx` | ~100 | News display |
 | `frontend/src/components/TripPanel.tsx` | ~30 | Trip stub |
-| `frontend/src/services/api.ts` | 122 | API client |
-| `frontend/src/types/index.ts` | 244 | TypeScript types |
-| `frontend/src/utils/helpers.ts` | 119 | UI formatters |
+| `frontend/src/services/api.ts` | ~137 | API client (typed responses) |
+| `frontend/src/types/index.ts` | ~290 | TypeScript types (Segment, TransitOption, etc.) |
+| `frontend/src/utils/helpers.ts` | ~120 | UI formatters (mode icons, duration, rupees) |
 
 ### 15.3 ML & Utility Files
 
@@ -1615,8 +1564,8 @@ Then import workflows from the `workflows/` directory.
 
 ---
 
-> **END OF DOCUMENTATION**
->
-> This document covers the complete VOYAGER Bengaluru Transit Navigator project
-> as of July 14, 2026. For the latest updates, refer to AGENTS.md and the
-> project issue tracker.
+## End of Document
+
+*This document covers the complete VOYAGER Bengaluru Route Planner as of July 2026. For questions or contributions, refer to the code files listed above — each file has detailed implementation comments for further exploration.*
+
+*Next major iteration: GTFS schedule integration + segment builder editing mode + route planning speed optimization.*
