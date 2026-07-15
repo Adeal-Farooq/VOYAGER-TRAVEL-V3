@@ -224,45 +224,32 @@ export interface SegmentStepData {
   }[]
 }
 
-// New flat multi-segment types
-export interface AllSegmentsResponse {
-  status: string
-  data: {
-    source: { lat: number; lng: number; name: string }
-    dest: { lat: number; lng: number; name: string }
-    segments: AllSegment[]
-    total_segments: number
-  }
+export interface CompleteJourneyDestOption {
+  to: SegmentStopInfo
+  transport_options: SegmentStepOption[]
+  next: CompleteJourneySegmentNode | null
+  from_stops: { to: SegmentStopInfo; transport_options: SegmentStepOption[] }[]
 }
 
-export interface AllSegment {
-  segment_index: number
-  type: string
+export interface CompleteJourneySegmentNode {
   from: { name: string; lat: number; lng: number }
+  destinations: CompleteJourneyDestOption[]
   direct_options: SegmentStepOption[]
-  destinations: SegmentDestination[]
 }
 
-export interface SegmentDestination {
-  stop: SegmentStopInfo
-  distance_from_current: number
-  reach_options: SegmentStepOption[]
-  transit_options: TransitOption[]
-  all_buses?: Record<string, string[]>
+export interface CompleteJourneySegment {
+  segment_index: number
+  from: { name: string; lat: number; lng: number }
+  destinations: CompleteJourneyDestOption[]
+  direct_options: SegmentStepOption[]
+  parent_via_index?: number | null
 }
 
-export interface TransitOption extends SegmentStepOption {
-  route_number?: string
-  bus_times?: { departure_time: string; route: string }[]
-  transit_type?: string
-  departure_time?: string
-  arrival_time?: string
-  final_options: SegmentStepOption[]
-  next_transit?: TransitOption[]
-  next_segment_index?: number
-  needs_next_segment?: boolean
-  dropoff_walk_min?: number
-  dropoff_to_dest_km?: number
+export interface CompleteJourneyResponse {
+  from: { lat: number; lng: number; name: string }
+  dest: { lat: number; lng: number; name: string }
+  segments: CompleteJourneySegment[]
+  direct_options: SegmentStepOption[]
 }
 
 export interface NewsItem {

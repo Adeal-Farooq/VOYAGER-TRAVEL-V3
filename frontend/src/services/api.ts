@@ -134,4 +134,19 @@ export async function getMiniPathOptions(
   return data
 }
 
+export async function getCompleteJourney(
+  fromLat: number, fromLng: number, fromName: string,
+  destLat: number, destLng: number, destName: string,
+  groupSize: number = 1, budget?: number
+): Promise<{ status: string; journey: any }> {
+  const params: any = {
+    from_lat: fromLat, from_lng: fromLng, from_name: fromName,
+    dest_lat: destLat, dest_lng: destLng, dest_name: destName,
+    group_size: groupSize,
+  }
+  if (budget !== undefined) params.budget = budget
+  const { data } = await api.get('/routes/complete-journey', { params })
+  return data
+}
+
 export default api
