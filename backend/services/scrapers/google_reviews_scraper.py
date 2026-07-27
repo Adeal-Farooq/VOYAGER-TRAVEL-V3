@@ -85,7 +85,7 @@ class GoogleReviewsScraper:
                     "photos": photos,
                     "source": "google_places_api",
                     "is_recommended": rating >= 3.5 if rating else True,
-                    "reliability_score": min(1.0, user_ratings_total / 20) if user_ratings_total > 0 else 0.5,
+                    "reliability_score": round(min(rating / 5, 1.0), 2) if rating > 0 else 0.5,
                     "price_level": result.get("price_level"),
                     "address": result.get("formatted_address", ""),
                 }

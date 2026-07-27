@@ -550,8 +550,8 @@ class TransitService:
                             {"from": dst_bus["name"], "to": "Your Destination", "mode": "walk",
                              "distance_km": round(walking_from_bus, 2), "duration_minutes": round(walking_from_bus * 12), "fare": 0}
                         ]
-                    })
-        return routes
+                     })
+        return routes[:3]
 
     def __init__(self):
         from backend.services.transit_paths import TransitPathService

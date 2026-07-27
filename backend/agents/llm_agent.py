@@ -91,7 +91,7 @@ class LLMAgent:
         results = await search_places(query, lat, lng, limit=8)
         if results:
             for r in results:
-                r["reliability_score"] = min(1.0, (r.get("rating", 0) or 0) / 5) if r.get("rating", 0) > 0 else 0.7
+                r["reliability_score"] = round(min((r.get("rating", 0) or 0) / 5, 1.0), 2) if r.get("rating", 0) > 0 else 0.5
                 r["is_recommended"] = (r.get("rating", 0) or 0) >= 3.5
                 r["review_summary"] = r.get("review_summary", "")
                 r["address"] = r.get("address", "")
@@ -130,7 +130,7 @@ class LLMAgent:
         results = await search_nearby(lat, lng, place_type, radius_km, limit=8)
         if results:
             for r in results:
-                r["reliability_score"] = min(1.0, (r.get("rating", 0) or 0) / 5) if r.get("rating", 0) > 0 else 0.7
+                r["reliability_score"] = round(min((r.get("rating", 0) or 0) / 5, 1.0), 2) if r.get("rating", 0) > 0 else 0.5
                 r["is_recommended"] = (r.get("rating", 0) or 0) >= 3.5
                 r["address"] = r.get("address", "")
             return results[:15]

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { MapContainer, TileLayer, useMap, Polyline, Marker, Popup, CircleMarker } from 'react-leaflet'
+import { MapContainer, TileLayer, useMap, Polyline, Marker, Popup, CircleMarker, Circle } from 'react-leaflet'
 import L from 'leaflet'
 import type { PlaceResult, MapRouteGeometry, NewsItem } from '../types'
 import { getPlaceIconName, getScoreLabel, getScoreColor } from '../utils/helpers'
@@ -18,6 +18,8 @@ interface MapViewProps {
   liveTrackingPos: [number, number] | null
   trackingActive: boolean
   newsItems: NewsItem[]
+  searchCenter?: [number, number] | null
+  searchRadius?: number
 }
 
 function MapController({ mapRef, onCenterChange, center }: {
@@ -36,7 +38,7 @@ function MapController({ mapRef, onCenterChange, center }: {
       cbRef.current?.([c.lat, c.lng])
     }
     map.on('moveend', handler)
-    return () => map.off('moveend', handler)
+    return () => { map.off('moveend', handler) }
   }, [map])
   return null
 }
@@ -90,11 +92,22 @@ function PlaceMarker({ place, onClick }: { place: PlaceResult; onClick?: (p: Pla
   )
 }
 
+function SearchRadiusCircle({ center, radiusKm }: { center: [number, number]; radiusKm: number }) {
+  return (
+    <Circle center={center} radius={radiusKm * 1000}
+      pathOptions={{
+        color: '#3b82f6', weight: 2, opacity: 0.5,
+        fillColor: '#3b82f6', fillOpacity: 0.08,
+      }} />
+  )
+}
+
 export default function MapView({
   mapRef, center, onCenterChange, userLocation,
   allMarkers, selectedPlace, onMarkerClick,
   routeGeometry, sourceLocation, destLocation,
   liveTrackingPos, trackingActive, newsItems,
+  searchCenter, searchRadius,
 }: MapViewProps) {
 
   return (
@@ -108,6 +121,10 @@ export default function MapView({
 
       {userLocation && !trackingActive && <UserLocationMarker position={userLocation} />}
       {liveTrackingPos && trackingActive && <UserLocationMarker position={liveTrackingPos} />}
+
+      {searchCenter && searchRadius && (
+        <SearchRadiusCircle center={searchCenter} radiusKm={searchRadius} />
+      )}
 
       {allMarkers.map((place, i) => (
         <PlaceMarker key={i} place={place} onClick={onMarkerClick} />

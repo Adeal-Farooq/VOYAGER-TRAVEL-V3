@@ -38,7 +38,7 @@ const NEARBY_TAGS = [
 export default function SearchPanel({
   onSelectPlace, onViewOnMap, onViewDetails, onNavigateToPlace, enrichingName,
 }: SearchPanelProps) {
-  const { userLocation, setAllMarkers } = useApp()
+  const { userLocation, setAllMarkers, setSearchCenter, setSearchRadius } = useApp()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<PlaceResult[]>([])
   const [suggestions, setSuggestions] = useState<string[]>([])
@@ -50,10 +50,13 @@ export default function SearchPanel({
   const [tab, setTab] = useState<'search' | 'nearby'>('search')
   const [searchedPlace, setSearchedPlace] = useState<PlaceResult | null>(null)
   const searchAbortRef = useRef<AbortController | null>(null)
+  const searchSubmittedRef = useRef(false)
 
-  const handleSearch = useCallback(async () => {
-    const q = query.trim()
+  const handleSearch = useCallback(async (overrideQuery?: string) => {
+    searchSubmittedRef.current = true
+    const q = (overrideQuery ?? query).trim()
     if (!q) return
+    setSuggestions([])
     if (searchAbortRef.current) searchAbortRef.current.abort()
     const ctrl = new AbortController()
     searchAbortRef.current = ctrl
@@ -77,6 +80,7 @@ export default function SearchPanel({
 
   useEffect(() => {
     if (!query || query.length < 2) { setSuggestions([]); return }
+    if (searchSubmittedRef.current) { searchSubmittedRef.current = false; return }
     const timer = setTimeout(async () => {
       try { const sugg = await getSuggestions(query); setSuggestions(sugg) }
       catch { setSuggestions([]) }
@@ -89,6 +93,8 @@ export default function SearchPanel({
     try {
       const lat = searchedPlace?.lat ?? userLocation?.[0] ?? 12.9716
       const lng = searchedPlace?.lng ?? userLocation?.[1] ?? 77.5946
+      setSearchCenter([lat, lng])
+      setSearchRadius(radius)
       const data = await getNearbyPlaces(lat, lng, radius, tag === 'all' ? undefined : tag)
       const places = data.results || []
       setNearbyResults(places); setAllMarkers(places)
@@ -98,7 +104,7 @@ export default function SearchPanel({
   }, [radius, searchedPlace, userLocation])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleSearch()
+    if (e.key === 'Enter') { e.preventDefault(); handleSearch(undefined) }
   }, [handleSearch])
 
   return (
@@ -114,15 +120,15 @@ export default function SearchPanel({
             <input type="text" placeholder="Search any place in Bengaluru..."
               value={query} onChange={(e) => {
                 setQuery(e.target.value)
-                if (!e.target.value.trim()) {
-                  setResults([]); setSuggestions([]); setAllMarkers([])
+                  if (!e.target.value.trim()) {
+                  setResults([]); setSuggestions([]); setAllMarkers([]); searchSubmittedRef.current = false
                 }
               }}
               onKeyDown={handleKeyDown}
               style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 14, color: 'var(--text)' }}
             />
           </div>
-          <button onClick={handleSearch} disabled={loading}
+          <button onClick={() => handleSearch()} disabled={loading}
             style={{
               padding: '10px 20px', border: 'none', borderRadius: 'var(--radius-lg)',
               background: 'var(--primary)', color: 'var(--on-primary)',
@@ -140,7 +146,7 @@ export default function SearchPanel({
             boxShadow: '0 8px 32px var(--shadow-primary)',
           }}>
             {suggestions.map((s, i) => (
-              <div key={i} onClick={() => { setQuery(s); setSuggestions([]) }}
+              <div key={i} onClick={() => { setQuery(s); setSuggestions([]); handleSearch(s) }}
                 style={{ padding: '10px 14px', cursor: 'pointer', fontSize: 13, borderBottom: i < suggestions.length - 1 ? '1px solid var(--outline-variant)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--text-muted)' }}>location_on</span>
                 {s}
@@ -152,7 +158,7 @@ export default function SearchPanel({
 
       <div style={{ display: 'flex', gap: 0, padding: '8px 16px', borderBottom: '1px solid rgba(198,197,212,0.15)' }}>
         {['search', 'nearby'].map(t => (
-          <button key={t} onClick={() => setTab(t as typeof tab)}
+          <button key={t} onClick={() => { setTab(t as typeof tab); if (t === 'search') setSearchCenter(null) }}
             style={{
               flex: 1, padding: '8px 12px', border: 'none', borderRadius: 'var(--radius-full)',
               background: tab === t ? 'var(--primary)' : 'transparent',
@@ -217,7 +223,7 @@ export default function SearchPanel({
               <span>{nearbyResults.length} places found</span>
             </div>
             <input type="range" min={0.5} max={10} step={0.5} value={radius}
-              onChange={(e) => setRadius(parseFloat(e.target.value))}
+              onChange={(e) => { const v = parseFloat(e.target.value); setRadius(v); setSearchRadius(v) }}
               style={{ width: '100%', marginBottom: 8 }} />
           </div>
 

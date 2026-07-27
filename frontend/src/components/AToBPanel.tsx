@@ -103,22 +103,22 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
     try {
       if (subMode === 'drive') {
         const data = await planRoute({
-          source_lat: sourceLocation[0], source_lng: sourceLocation[1],
-          dest_lat: destLocation[0], dest_lng: destLocation[1],
+          source_lat: srcLoc[0], source_lng: srcLoc[1],
+          dest_lat: dstLoc[0], dest_lng: dstLoc[1],
           mode: 'personal', group_size: groupSize, budget: budget,
         })
         if (ctrl.signal.aborted) return
         if (data?.routes) setRoutes(data.routes)
         const prices = await getRidePrices(
           sourceQuery || 'Source', destQuery || 'Destination',
-          sourceLocation[0], sourceLocation[1],
-          destLocation[0], destLocation[1],
+          srcLoc[0], srcLoc[1],
+          dstLoc[0], dstLoc[1],
         )
         if (!ctrl.signal.aborted) setRidePrices(prices?.prices || [])
       } else if (subMode === 'walk') {
         const data = await planRoute({
-          source_lat: sourceLocation[0], source_lng: sourceLocation[1],
-          dest_lat: destLocation[0], dest_lng: destLocation[1],
+          source_lat: srcLoc[0], source_lng: srcLoc[1],
+          dest_lat: dstLoc[0], dest_lng: dstLoc[1],
           mode: 'walking', group_size: groupSize, budget: budget,
         })
         if (ctrl.signal.aborted) return
@@ -127,7 +127,7 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
         if (transportType === 'direct') {
           const [pricesRes, driveRes] = await Promise.allSettled([
             getRidePrices(sourceQuery || 'Source', destQuery || 'Destination',
-              sourceLocation[0], sourceLocation[1], destLocation[0], destLocation[1]),
+              srcLoc[0], srcLoc[1], dstLoc[0], dstLoc[1]),
             planRoute({
               source_lat: srcLoc[0], source_lng: srcLoc[1],
               dest_lat: dstLoc[0], dest_lng: dstLoc[1],
@@ -171,8 +171,8 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
           })
           const prices = await getRidePrices(
             sourceQuery || 'Source', destQuery || 'Destination',
-            sourceLocation[0], sourceLocation[1],
-            destLocation[0], destLocation[1],
+            srcLoc[0], srcLoc[1],
+            dstLoc[0], dstLoc[1],
           )
           if (!ctrl.signal.aborted) setRidePrices(prices?.prices || [])
         }

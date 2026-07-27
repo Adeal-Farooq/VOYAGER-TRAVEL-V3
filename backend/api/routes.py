@@ -602,6 +602,7 @@ _ROAD_ORDER = ["motorway", "trunk", "primary", "secondary", "tertiary", "residen
 
 _traffic_speed_cache = None
 _last_speed_load = 0
+_road_geojson_cache = None
 
 def _get_current_speed():
     """Realistic speed model based on time-of-day instead of synthetic CSV."""

@@ -1,5 +1,8 @@
 import asyncio
+import logging
 from fastapi import APIRouter, Query
+
+logger = logging.getLogger(__name__)
 from backend.services.geocoding import geocoding_service
 from backend.agents.llm_agent import llm_agent
 from backend.services.langgraph.tools.review_tools import get_place_reviews
@@ -98,7 +101,7 @@ async def enrich_place(body: dict):
             geocoding_service.enrich_single_place(name, lat, lng, place_type, address), timeout=25.0
         )
     except asyncio.TimeoutError:
-        enriched = {"name": name, "rating": 4.0, "review_summary": "No reviews yet", "reliability_score": 0.7}
+        enriched = {"name": name, "rating": 3.0, "review_summary": "No reviews yet", "reliability_score": 0.5}
     return {"status": "success", "place": enriched}
 
 @router.get("/ride-prices")
