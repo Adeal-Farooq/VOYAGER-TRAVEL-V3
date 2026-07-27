@@ -1,620 +1,671 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { RouteOption, RidePrice, PlaceResult, RouteLeg, NewsItem, MapRouteGeometry } from '../types'
-import { planRoute, getRidePrices, searchPlaces } from '../services/api'
-import { getModeIcon, getModeLabel, formatDuration, formatRupees, getScoreColor, getScoreLabel } from '../utils/helpers'
-
-function _distKm(a: [number, number], b: [number, number]): number {
-  const R = 6371; const dLat = (b[0] - a[0]) * Math.PI / 180; const dLng = (b[1] - a[1]) * Math.PI / 180
-  const sLat = Math.sin(dLat / 2); const sLng = Math.sin(dLng / 2)
-  return 2 * R * Math.asin(Math.sqrt(sLat * sLat + Math.cos(a[0] * Math.PI / 180) * Math.cos(b[0] * Math.PI / 180) * sLng * sLng))
-}
+import { useApp } from '../context/AppContext'
+import type { PlaceResult, RouteOption, RouteLeg, MapRouteGeometry, RidePrice, NewsItem, AllSegment } from '../types'
+import { searchPlaces, getSuggestions, planRoute, getRidePrices, getAllSegments } from '../services/api'
+import { getModeLabel, formatDuration, formatRupees, getScoreColor } from '../utils/helpers'
+import SegmentFlowView from './SegmentFlowView'
 
 interface AToBPanelProps {
-  sourceLocation: [number, number] | null
-  destLocation: [number, number] | null
-  onSourceLocationChange: (loc: [number, number] | null) => void
-  onDestLocationChange: (loc: [number, number] | null) => void
-  onMapCenterChange: (center: [number, number]) => void
-  mapRef: React.MutableRefObject<any>
-  onRouteGeometry: (geometry: MapRouteGeometry[]) => void
+  onRouteGeometry: (geo: MapRouteGeometry[] | null) => void
   onNewsUpdate: (news: NewsItem[]) => void
-  onWaypointsChange?: (waypoints: { lat: number; lng: number; query: string }[]) => void
-  onOpenSegmentPanel?: (sourceName: string, destName: string, groupSize: number, budget?: number) => void
 }
 
-export default function AToBPanel({
-  sourceLocation, destLocation, onSourceLocationChange, onDestLocationChange, onMapCenterChange, mapRef, onRouteGeometry, onNewsUpdate,
-  onWaypointsChange, onOpenSegmentPanel,
-}: AToBPanelProps) {
-  const [sourceQuery, setSourceQuery] = useState('')
-  const [destQuery, setDestQuery] = useState('')
-  const [sourceSuggestions, setSourceSuggestions] = useState<PlaceResult[]>([])
-  const [destSuggestions, setDestSuggestions] = useState<PlaceResult[]>([])
-  const [sourceLoading, setSourceLoading] = useState(false)
-  const [destLoading, setDestLoading] = useState(false)
-  const [waypoints, setWaypoints] = useState<{ lat: number; lng: number; query: string }[]>([])
-  const [wpSuggestions, setWpSuggestions] = useState<{ idx: number; items: PlaceResult[] } | null>(null)
-  const [routes, setRoutes] = useState<RouteOption[]>([])
+type SubMode = 'transport' | 'drive' | 'walk'
+type TransportType = 'direct' | 'segment'
+
+export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelProps) {
+  const {
+    sourceLocation, setSourceLocation, destLocation, setDestLocation,
+    sourceQuery, setSourceQuery, destQuery, setDestQuery,
+    groupSize, setGroupSize, budget, setBudget,
+    mapRef, startJourney, userLocation,
+  } = useApp()
+
+  const [sourceSuggestions, setSourceSuggestions] = useState<string[]>([])
+  const [destSuggestions, setDestSuggestions] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
-  const [selectedRoute, setSelectedRoute] = useState<number | null>(null)
-  const [travelMode, setTravelMode] = useState<'public' | 'personal' | 'walking'>('public')
-  const [prefs, setPrefs] = useState({ budget: undefined as number | undefined, groupSize: 1 })
-  const [insights, setInsights] = useState('')
+  const [error, setError] = useState('')
+  const [subMode, setSubMode] = useState<SubMode>('transport')
+  const [transportType, setTransportType] = useState<TransportType>('segment')
+  const [routes, setRoutes] = useState<RouteOption[]>([])
+  const [selectedRouteKey, setSelectedRouteKey] = useState<string | null>(null)
   const [ridePrices, setRidePrices] = useState<RidePrice[]>([])
-  const [ridePricesLoading, setRidePricesLoading] = useState(false)
-  const [recommendations, setRecommendations] = useState<any>(null)
-  const [weather, setWeather] = useState<any>(null)
+  const [showPrices, setShowPrices] = useState(false)
+  const [expandedLegs, setExpandedLegs] = useState<number | null>(null)
+  const [activeHopIndex, setActiveHopIndex] = useState<number>(0)
+  const [showHopFlow, setShowHopFlow] = useState(false)
+  const [segments, setSegments] = useState<AllSegment[]>([])
+  const [segmentsLoading, setSegmentsLoading] = useState(false)
+  const [viewMode, setViewMode] = useState<'routes' | 'segments'>('routes')
+  const [showSegmentModal, setShowSegmentModal] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const planRef = useRef<() => void>(() => {})
-  const srcAbortRef = useRef<AbortController | null>(null)
-  const dstAbortRef = useRef<AbortController | null>(null)
-  const wpAbortRef = useRef<AbortController | null>(null)
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const getRouteKey = (r: RouteOption) =>
+    `${r.type}-${r.total_fare}-${r.total_duration_minutes}-${r.total_distance_km}`
 
-  // Emit waypoint locations to parent for map markers
   useEffect(() => {
-    onWaypointsChange?.(waypoints.filter(w => w.lat !== 0))
-  }, [waypoints, onWaypointsChange])
+    if (!sourceQuery || sourceQuery.length < 2) { setSourceSuggestions([]); return }
+    const t = setTimeout(async () => {
+      try { setSourceSuggestions(await getSuggestions(sourceQuery)) }
+      catch { setSourceSuggestions([]) }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [sourceQuery])
 
-  // News: only fetch after routes are loaded (settled query), then every 30s
-  const newsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const startNewsFetch = useCallback(async () => {
-    if (!sourceQuery && !destQuery) return
-    try {
-      const src = encodeURIComponent(sourceQuery || 'Current Location')
-      const dst = encodeURIComponent(destQuery || 'Destination')
-      const resp = await fetch(`/api/routes/news?source_name=${src}&dest_name=${dst}`)
-      const data = await resp.json()
-      if (data.news) onNewsUpdate(data.news.slice(0, 6))
-    } catch { /* ignore */ }
-    if (!newsIntervalRef.current) {
-      newsIntervalRef.current = setInterval(async () => {
-        try {
-          const src = encodeURIComponent(sourceQuery || 'Current Location')
-          const dst = encodeURIComponent(destQuery || 'Destination')
-          const resp = await fetch(`/api/routes/news?source_name=${src}&dest_name=${dst}`)
-          const data = await resp.json()
-          if (data.news) onNewsUpdate(data.news.slice(0, 6))
-        } catch { /* ignore */ }
-      }, 30000)
+  useEffect(() => {
+    if (!destQuery || destQuery.length < 2) { setDestSuggestions([]); return }
+    const t = setTimeout(async () => {
+      try { setDestSuggestions(await getSuggestions(destQuery)) }
+      catch { setDestSuggestions([]) }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [destQuery])
+
+  const pickSource = useCallback(async (q: string) => {
+    setSourceQuery(q); setSourceSuggestions([])
+    const data = await searchPlaces(q, 12.9716, 77.5946)
+    if (data.results?.[0]) setSourceLocation([data.results[0].lat, data.results[0].lng])
+  }, [setSourceLocation, setSourceQuery])
+
+  const pickDest = useCallback(async (q: string) => {
+    setDestQuery(q); setDestSuggestions([])
+    const data = await searchPlaces(q, 12.9716, 77.5946)
+    if (data.results?.[0]) {
+      setDestLocation([data.results[0].lat, data.results[0].lng])
+      if (mapRef.current) mapRef.current.flyTo([data.results[0].lat, data.results[0].lng], 13)
     }
-  }, [sourceQuery, destQuery, onNewsUpdate])
+  }, [setDestLocation, setDestQuery, mapRef])
 
-  useEffect(() => {
-    return () => { if (newsIntervalRef.current) clearInterval(newsIntervalRef.current) }
-  }, [])
+  const handleFindRoutes = useCallback(async () => {
+    let srcLoc = sourceLocation
+    let dstLoc = destLocation
+    if (!srcLoc && sourceQuery.toLowerCase() === 'current location') {
+      srcLoc = userLocation || [12.9716, 77.5946]
+      setSourceLocation(srcLoc)
+    }
+    if (!dstLoc && destQuery) {
+      try {
+        const data = await searchPlaces(destQuery, 12.9716, 77.5946)
+        if (data.results?.[0]) {
+          dstLoc = [data.results[0].lat, data.results[0].lng]
+          setDestLocation(dstLoc)
+        }
+      } catch {}
+    }
+    if (!srcLoc || !dstLoc) { setError('Please set both source and destination'); setLoading(false); return }
+    setLoading(true); setError(''); setRoutes([]); setSelectedRouteKey(null)
+    setSegments([]); setSegmentsLoading(false); setShowSegmentModal(false); setViewMode('routes')
+    onRouteGeometry(null)
+    if (abortRef.current) abortRef.current.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
 
-  const handleOpenSegmentPanel = useCallback(() => {
-    if (!sourceLocation || !destLocation || !onOpenSegmentPanel) return
-    onOpenSegmentPanel(sourceQuery || 'Your Location', destQuery || 'Destination', prefs.groupSize, prefs.budget)
-  }, [sourceLocation, destLocation, sourceQuery, destQuery, prefs, onOpenSegmentPanel])
-
-  // Emit route geometry
-  useEffect(() => {
-    const geo: MapRouteGeometry[] = []
-
-    if (selectedRoute !== null && sourceLocation && destLocation && routes[selectedRoute]) {
-      const route = routes[selectedRoute]
-      if (route.geometry?.coordinates?.length > 0) {
-        geo.push({
-          type: 'route',
-          coordinates: route.geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number]),
-          color: '#3b82f6', weight: 5, label: route.type,
+    try {
+      if (subMode === 'drive') {
+        const data = await planRoute({
+          source_lat: srcLoc[0], source_lng: srcLoc[1],
+          dest_lat: dstLoc[0], dest_lng: dstLoc[1],
+          mode: 'personal', group_size: groupSize, budget: budget,
         })
-      } else if (route.legs?.length > 0) {
-        // Build continuous path from leg path data (real road geometry) or fall back to leg coordinates
-        const pathCoords: [number, number][] = []
-        let hasRealPath = false
-        route.legs.forEach((leg) => {
-          const legPath = (leg as any).path
-          if (legPath && legPath.length >= 2) {
-            hasRealPath = true
-            if (pathCoords.length === 0) {
-              pathCoords.push(...legPath)
-            } else {
-              const skip = _distKm(pathCoords[pathCoords.length - 1], legPath[0]) < 0.05 ? 1 : 0
-              pathCoords.push(...legPath.slice(skip))
+        if (ctrl.signal.aborted) return
+        if (data?.routes) setRoutes(data.routes)
+        const prices = await getRidePrices(
+          sourceQuery || 'Source', destQuery || 'Destination',
+          srcLoc[0], srcLoc[1],
+          dstLoc[0], dstLoc[1],
+        )
+        if (!ctrl.signal.aborted) setRidePrices(prices?.prices || [])
+      } else if (subMode === 'walk') {
+        const data = await planRoute({
+          source_lat: srcLoc[0], source_lng: srcLoc[1],
+          dest_lat: dstLoc[0], dest_lng: dstLoc[1],
+          mode: 'walking', group_size: groupSize, budget: budget,
+        })
+        if (ctrl.signal.aborted) return
+        if (data?.routes) setRoutes(data.routes)
+      } else if (subMode === 'transport') {
+        if (transportType === 'direct') {
+          const [pricesRes, driveRes] = await Promise.allSettled([
+            getRidePrices(sourceQuery || 'Source', destQuery || 'Destination',
+              srcLoc[0], srcLoc[1], dstLoc[0], dstLoc[1]),
+            planRoute({
+              source_lat: srcLoc[0], source_lng: srcLoc[1],
+              dest_lat: dstLoc[0], dest_lng: dstLoc[1],
+              mode: 'personal', group_size: groupSize, budget: budget,
+            }),
+          ])
+          if (!ctrl.signal.aborted) {
+            setRidePrices(pricesRes.status === 'fulfilled' ? (pricesRes.value?.prices || []) : [])
+            if (driveRes.status === 'fulfilled' && driveRes.value?.routes) {
+              setRoutes(driveRes.value.routes)
             }
-          } else {
-            const lat = (leg as any).from_lat
-            const lng = (leg as any).from_lng
-            if (lat != null && lng != null) pathCoords.push([lat, lng])
+            setShowPrices(true)
           }
-        })
-        if (!hasRealPath) {
-          const lastLeg = route.legs[route.legs.length - 1]
-          const tLat = (lastLeg as any).to_lat
-          const tLng = (lastLeg as any).to_lng
-          if (tLat != null && tLng != null) pathCoords.push([tLat, tLng])
-        }
-        if (pathCoords.length >= 2) {
-          geo.push({ type: 'route', coordinates: pathCoords, color: '#3b82f6', weight: 5, label: route.type })
         } else {
-          geo.push({ type: 'route', coordinates: [sourceLocation, destLocation], color: '#3b82f6', weight: 5, dashArray: '10, 6', label: route.type })
+          // Load planRoute first — show routes immediately
+          let routesData: any = null
+          try {
+            routesData = await planRoute({
+              source_lat: srcLoc[0], source_lng: srcLoc[1],
+              dest_lat: dstLoc[0], dest_lng: dstLoc[1],
+              mode: 'public', group_size: groupSize, budget: budget,
+            })
+          } catch {}
+          if (ctrl.signal.aborted) return
+          if (routesData?.routes) setRoutes(routesData.routes)
+
+          // Load getAllSegments asynchronously with own loading state
+          setSegmentsLoading(true)
+          getAllSegments(
+            srcLoc[0], srcLoc[1], sourceQuery || 'Current Location',
+            dstLoc[0], dstLoc[1], destQuery || 'Destination',
+            groupSize, budget, 3
+          ).then(segRes => {
+            if (ctrl.signal.aborted) return
+            if (segRes?.data?.segments?.length) {
+              setSegments(segRes.data.segments)
+              setShowSegmentModal(true)
+            }
+          }).catch(() => {}).finally(() => {
+            if (!ctrl.signal.aborted) setSegmentsLoading(false)
+          })
+          const prices = await getRidePrices(
+            sourceQuery || 'Source', destQuery || 'Destination',
+            srcLoc[0], srcLoc[1],
+            dstLoc[0], dstLoc[1],
+          )
+          if (!ctrl.signal.aborted) setRidePrices(prices?.prices || [])
         }
-      } else {
-        geo.push({
-          type: 'route', coordinates: [sourceLocation, destLocation],
-          color: '#3b82f6', weight: 5, dashArray: '10, 6', label: route.type,
-        })
       }
-
-      const modeColors: Record<string, string> = {
-        walk: '#94a3b8', walk_to_bus: '#94a3b8', walk_to_metro: '#94a3b8',
-        walk_from_bus: '#94a3b8', walk_from_metro: '#94a3b8',
-        bus_ordinary: '#3b82f6', bus_ac_vajra: '#8b5cf6',
-        metro: '#22c55e', metro_interchange: '#059669',
-        car: '#f97316', cab: '#f59e0b', driving: '#f97316',
-      }
-      route.legs?.forEach((leg) => {
-        const legPath = (leg as any).path
-        const color = modeColors[leg.mode] || '#64748b'
-        if (legPath && legPath.length >= 2) {
-          geo.push({ type: 'segment', coordinates: legPath, color, weight: 3, label: getModeLabel(leg.mode) })
-        } else {
-          const fLat = (leg as any).from_lat || sourceLocation[0]
-          const fLng = (leg as any).from_lng || sourceLocation[1]
-          const tLat = (leg as any).to_lat || destLocation[0]
-          const tLng = (leg as any).to_lng || destLocation[1]
-          geo.push({ type: 'segment', coordinates: [[fLat, fLng], [tLat, tLng]], color, weight: 3, label: getModeLabel(leg.mode) })
-        }
-      })
-    }
-
-    onRouteGeometry(geo)
-  }, [selectedRoute, routes, sourceLocation, destLocation, onRouteGeometry])
-
-
-
-  const handleSourceQuery = useCallback(async (value: string) => {
-    setSourceQuery(value)
-    if (value.length < 2) { setSourceSuggestions([]); setSourceLoading(false); return }
-    if (srcAbortRef.current) srcAbortRef.current.abort()
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
-    setSourceLoading(true)
-    searchTimerRef.current = setTimeout(async () => {
-      const ctrl = new AbortController()
-      srcAbortRef.current = ctrl
-      try {
-        const data = await searchPlaces(value, 12.97, 77.59, ctrl.signal)
-        setSourceSuggestions((data.results || []).slice(0, 5))
-      } catch { if (ctrl.signal.aborted) return; setSourceSuggestions([]) }
-      finally { setSourceLoading(false) }
-    }, 300)
-  }, [])
-
-  const handleDestQuery = useCallback(async (value: string) => {
-    setDestQuery(value)
-    if (value.length < 2) { setDestSuggestions([]); setDestLoading(false); return }
-    if (dstAbortRef.current) dstAbortRef.current.abort()
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
-    setDestLoading(true)
-    searchTimerRef.current = setTimeout(async () => {
-      const ctrl = new AbortController()
-      dstAbortRef.current = ctrl
-      try {
-        const data = await searchPlaces(value, 12.97, 77.59, ctrl.signal)
-        setDestSuggestions((data.results || []).slice(0, 5))
-      } catch { if (ctrl.signal.aborted) return; setDestSuggestions([]) }
-      finally { setDestLoading(false) }
-    }, 300)
-  }, [])
-
-  const addWaypoint = useCallback(() => {
-    setWaypoints(prev => [...prev, { lat: 0, lng: 0, query: '' }])
-  }, [])
-
-  const removeWaypoint = useCallback((idx: number) => {
-    setWaypoints(prev => prev.filter((_, i) => i !== idx))
-    setWpSuggestions(null)
-  }, [])
-
-  const handleWpQuery = useCallback(async (idx: number, value: string) => {
-    setWaypoints(prev => prev.map((wp, i) => i === idx ? { ...wp, query: value } : wp))
-    if (value.length < 2) { setWpSuggestions(null); return }
-    if (wpAbortRef.current) wpAbortRef.current.abort()
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
-    searchTimerRef.current = setTimeout(async () => {
-      const ctrl = new AbortController()
-      wpAbortRef.current = ctrl
-      try {
-        const data = await searchPlaces(value, 12.97, 77.59, ctrl.signal)
-        if (!ctrl.signal.aborted) setWpSuggestions({ idx, items: (data.results || []).slice(0, 5) })
-      } catch { if (ctrl.signal.aborted) return; setWpSuggestions(null) }
-    }, 300)
-  }, [])
-
-  const selectWpSuggestion = useCallback((idx: number, place: PlaceResult) => {
-    setWaypoints(prev => prev.map((wp, i) => i === idx ? { lat: place.lat, lng: place.lng, query: place.name } : wp))
-    setWpSuggestions(null)
-  }, [])
-
-  const handleSourceSelect = useCallback((place: PlaceResult) => {
-    setSourceQuery(place.name)
-    onSourceLocationChange([place.lat, place.lng])
-    setSourceSuggestions([])
-    onMapCenterChange([place.lat, place.lng])
-    if (newsIntervalRef.current) { clearInterval(newsIntervalRef.current); newsIntervalRef.current = null }
-  }, [onSourceLocationChange, onMapCenterChange])
-
-  const handleDestSelect = useCallback((place: PlaceResult) => {
-    setDestQuery(place.name)
-    onDestLocationChange([place.lat, place.lng])
-    setDestSuggestions([])
-    onMapCenterChange([place.lat, place.lng])
-  }, [onDestLocationChange, onMapCenterChange])
-
-  const handlePlanRoute = useCallback(async () => {
-    if (!sourceLocation || !destLocation) return
-
-    setLoading(true)
-    setRoutes([])
-    setSelectedRoute(null)
-    setRidePrices([])
-    setRidePricesLoading(true)
-
-    try {
-      const mode = travelMode === 'walking' ? 'walking' : travelMode === 'personal' ? 'personal' : 'default'
-      const wpData = waypoints.filter(wp => wp.lat !== 0).map(wp => ({ lat: wp.lat, lng: wp.lng, name: wp.query }))
-      const data = await planRoute({
-        source_lat: sourceLocation[0], source_lng: sourceLocation[1],
-        dest_lat: destLocation[0], dest_lng: destLocation[1],
-        mode, budget: prefs.budget, group_size: prefs.groupSize,
-        waypoints: wpData.length > 0 ? wpData : undefined,
-      })
-
-      setRoutes(data.routes || [])
-      if (data.routes?.length > 0) setSelectedRoute(0)
-      setRecommendations(data.recommendations || null)
-      setWeather(data.weather || null)
-      if (data.recommendations?.tips) {
-        setInsights(Array.isArray(data.recommendations.tips) ? data.recommendations.tips.join(' · ') : '')
-      }
-
-      // Start news fetching now that routes are loaded (queries are settled)
-      startNewsFetch()
-
-      if (mapRef.current) {
-        mapRef.current.fitBounds([[sourceLocation[0], sourceLocation[1]], [destLocation[0], destLocation[1]]], { padding: [50, 50] })
-      }
-
-      if (sourceQuery && destQuery && travelMode !== 'walking') {
-        try { const rd = await getRidePrices(sourceQuery, destQuery); setRidePrices(rd.prices || []) } catch { }
-      }
-
     } catch (err) {
-      console.error('Route planning failed:', err)
-    } finally {
-      setLoading(false)
-      setRidePricesLoading(false)
-    }
-  }, [sourceLocation, destLocation, sourceQuery, destQuery, travelMode, prefs, mapRef, startNewsFetch, waypoints, handleOpenSegmentPanel])
-  planRef.current = handlePlanRoute
+      if (!ctrl.signal.aborted) setError('Failed to find routes. Please try again.')
+    } finally { if (!ctrl.signal.aborted) setLoading(false) }
+  }, [sourceLocation, destLocation, subMode, transportType, groupSize, budget, sourceQuery, destQuery, onRouteGeometry, userLocation])
 
-  const handleUseCurrentLocation = useCallback(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude]
-          onSourceLocationChange(loc)
-          setSourceQuery('Current Location')
-          onMapCenterChange(loc)
-        },
-        () => alert('Unable to get your location. Please type a location.')
-      )
+  useEffect(() => {
+    const route = routes.find(r => getRouteKey(r) === selectedRouteKey)
+    if (!selectedRouteKey || !route) {
+      onRouteGeometry(null); return
     }
-  }, [onSourceLocationChange, onMapCenterChange])
+    const parseCoord = (c: any): [number, number] => {
+      if (Array.isArray(c) && c.length === 2) return [Number(c[0]), Number(c[1])]
+      if (typeof c === 'string') {
+        const parts = c.split(' ').map(Number)
+        if (parts.length === 2 && !isNaN(parts[0])) return [parts[0], parts[1]]
+        const partsC = c.split(',').map(Number)
+        if (partsC.length === 2 && !isNaN(partsC[0])) return [partsC[0], partsC[1]]
+      }
+      return [0, 0]
+    }
+    const geo: MapRouteGeometry[] = []
+    if (route.geometry?.coordinates) {
+      geo.push({
+        type: 'route', color: 'var(--primary)', weight: 5,
+        coordinates: route.geometry.coordinates.map((c: any) => [c[1], c[0]]),
+      })
+    }
+    route.legs?.forEach((leg, i) => {
+      if (leg.path && leg.path.length > 0) {
+        const coords = (leg.path as any[]).map(parseCoord).filter((c: [number,number]) => c[0] !== 0 || c[1] !== 0)
+        if (coords.length > 0) {
+          geo.push({
+            type: 'segment', color: leg.mode === 'walk' ? 'var(--secondary)' : 'var(--primary)',
+            weight: leg.mode === 'walk' ? 3 : 4,
+            dashArray: leg.mode === 'walk' ? '8, 4' : undefined,
+            coordinates: coords,
+            label: `${leg.from} → ${leg.to}`,
+          })
+        }
+      }
+    })
+    onRouteGeometry(geo)
+  }, [selectedRouteKey, routes, onRouteGeometry])
 
-  const legColors: Record<string, string> = {
-    walk: '#94a3b8', walk_to_bus: '#94a3b8', walk_to_metro: '#94a3b8',
-    walk_from_bus: '#94a3b8', walk_from_metro: '#94a3b8',
-    bus: '#3b82f6', bus_ordinary: '#3b82f6', bus_ac_vajra: '#8b5cf6',
-    metro: '#22c55e', metro_interchange: '#059669',
-    car: '#f97316', cab: '#f59e0b', cab_xl: '#f59e0b', cab_women: '#f59e0b', cab_pet: '#f59e0b',
-    bike: '#f97316', driving: '#f97316', auto: '#ef4444',
+  const swapLocations = useCallback(() => {
+    setSourceQuery(destQuery); setDestQuery(sourceQuery)
+    setSourceLocation(destLocation); setDestLocation(sourceLocation)
+  }, [sourceQuery, destQuery, sourceLocation, destLocation, setSourceQuery, setDestQuery, setSourceLocation, setDestLocation])
+
+  const TRANSIT_MODES = new Set(['bus_ordinary', 'bus_ac_vajra', 'kia_bus', 'metro', 'metro_interchange', 'bus_to_metro', 'metro_to_bus', 'walk', 'multi_modal', 'astar'])
+  const RIDE_MODES = new Set(['cab', 'auto', 'bike'])
+
+  const getTopRoutes = () => {
+    let filtered = [...routes]
+    if (subMode === 'transport' && transportType === 'segment') {
+      filtered = filtered.filter(r => TRANSIT_MODES.has(r.type) || r.type === 'walk')
+    } else if (subMode === 'transport' && transportType === 'direct') {
+      filtered = filtered.filter(r => RIDE_MODES.has(r.type) || r.type === 'car' || r.type === 'drive')
+    }
+    const sorted = filtered.sort((a, b) => (b.overall_score || 0) - (a.overall_score || 0))
+    return { top5: sorted.slice(0, 5), all: sorted }
   }
+
+  const { top5, all } = getTopRoutes()
 
   return (
     <div>
-      {/* Source/Dest Inputs */}
-      <div className="atob-inputs">
-        <div className="input-with-icon">
-          <span>🟢</span>
-          <input type="text" placeholder="Starting point..." value={sourceQuery}
-            onChange={(e) => handleSourceQuery(e.target.value)} />
-          <button onClick={handleUseCurrentLocation}
-            style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-            📍 Current
-          </button>
-        </div>
-        {sourceLoading && sourceSuggestions.length === 0 && (
-          <div className="suggestions-dropdown" style={{ position: 'relative' }}>
-            {[1,2,3].map(i => (
-              <div key={i} className="suggestion-item" style={{ pointerEvents: 'none' }}>
-                <span style={{ display: 'inline-block', width: 16, height: 12, background: '#334155', borderRadius: 2 }} />
-                <span style={{ display: 'inline-block', width: `${60 + i * 20}px`, height: 12, background: '#334155', borderRadius: 2, marginLeft: 6 }} />
-              </div>
-            ))}
-            <div style={{ padding: '4px 8px', fontSize: 10, color: '#64748b' }}>Searching...</div>
-          </div>
-        )}
-        {!sourceLoading && sourceSuggestions.length > 0 && (
-          <div className="suggestions-dropdown" style={{ position: 'relative' }}>
-            {sourceSuggestions.map((place, i) => (
-              <div key={i} className="suggestion-item" onClick={() => handleSourceSelect(place)}>
-                <span>{getModeIcon(place.place_type)}</span> {place.name}
-                <span style={{ fontSize: 10, color: '#64748b', marginLeft: 6 }}>{place.address?.slice(0, 30)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {/* Waypoints */}
-        {waypoints.map((wp, wi) => (
-          <div key={wi} style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-            <span style={{ fontSize: 11, color: '#f59e0b' }}>📍{wi + 1}</span>
-            <input type="text" placeholder={`Stop ${wi + 2}...`} value={wp.query}
-              onChange={(e) => handleWpQuery(wi, e.target.value)}
-              style={{ flex: 1, padding: '6px 8px', fontSize: 12, border: '1px solid #475569', borderRadius: 6, background: '#1e293b', color: '#e2e8f0', outline: 'none' }} />
-            <button onClick={() => removeWaypoint(wi)}
-              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '2px 6px' }}>✕</button>
-          </div>
-        ))}
-        {wpSuggestions && wpSuggestions.items.length > 0 && (
-          <div className="suggestions-dropdown" style={{ position: 'relative' }}>
-            {wpSuggestions.items.map((place, i) => (
-              <div key={i} className="suggestion-item" onClick={() => selectWpSuggestion(wpSuggestions.idx, place)}>
-                <span>{getModeIcon(place.place_type)}</span> {place.name}
-                <span style={{ fontSize: 10, color: '#64748b', marginLeft: 6 }}>{place.address?.slice(0, 30)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        <button onClick={addWaypoint} disabled={waypoints.length >= 5}
-          style={{ marginTop: 4, background: '#1e3a5f', border: '1px solid #3b82f6', color: '#60a5fa', padding: '4px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer', width: '100%' }}>
-          + Add Stop ({waypoints.length}/5)
-        </button>
-        <div className="input-with-icon" style={{ marginTop: 4 }}>
-          <span>🔴</span>
-          <input type="text" placeholder="Destination..." value={destQuery}
-            onChange={(e) => handleDestQuery(e.target.value)} />
-        </div>
-        {destLoading && destSuggestions.length === 0 && (
-          <div className="suggestions-dropdown" style={{ position: 'relative' }}>
-            {[1,2,3].map(i => (
-              <div key={i} className="suggestion-item" style={{ pointerEvents: 'none' }}>
-                <span style={{ display: 'inline-block', width: 16, height: 12, background: '#334155', borderRadius: 2 }} />
-                <span style={{ display: 'inline-block', width: `${60 + i * 20}px`, height: 12, background: '#334155', borderRadius: 2, marginLeft: 6 }} />
-              </div>
-            ))}
-            <div style={{ padding: '4px 8px', fontSize: 10, color: '#64748b' }}>Searching...</div>
-          </div>
-        )}
-        {!destLoading && destSuggestions.length > 0 && (
-          <div className="suggestions-dropdown" style={{ position: 'relative' }}>
-            {destSuggestions.map((place, i) => (
-              <div key={i} className="suggestion-item" onClick={() => handleDestSelect(place)}>
-                <span>{getModeIcon(place.place_type)}</span> {place.name}
-                <span style={{ fontSize: 10, color: '#64748b', marginLeft: 6 }}>{place.address?.slice(0, 30)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Preferences */}
-      <div className="preferences-panel" style={{ marginTop: 8 }}>
-        <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8, fontWeight: 600 }}>⚙️ PREFERENCES</div>
-        <div className="pref-row">
-          <span>👥 Group Size</span>
-          <input type="number" min={1} max={20} value={prefs.groupSize}
-            onChange={(e) => setPrefs({ ...prefs, groupSize: parseInt(e.target.value) || 1 })} />
-        </div>
-        <div className="pref-row">
-          <span>💰 Budget (₹)</span>
-          <input type="number" min={0} placeholder="No limit" value={prefs.budget || ''}
-            onChange={(e) => setPrefs({ ...prefs, budget: e.target.value ? parseFloat(e.target.value) : undefined })} />
-        </div>
-      </div>
-
-      {/* Travel Mode Selector — renamed to Public / Online */}
-      <div className="mode-selector" style={{ marginTop: 8 }}>
-        <button className={`mode-btn ${travelMode === 'public' ? 'active' : ''}`}
-          onClick={() => setTravelMode('public')}>🚌 Public / Online</button>
-        <button className={`mode-btn ${travelMode === 'personal' ? 'active' : ''}`}
-          onClick={() => setTravelMode('personal')}>🚗 Drive</button>
-        <button className={`mode-btn ${travelMode === 'walking' ? 'active' : ''}`}
-          onClick={() => setTravelMode('walking')}>🚶 Walk</button>
-      </div>
-
-      {/* Segment Builder button */}
-      {travelMode === 'public' && (
-        <button onClick={handleOpenSegmentPanel} style={{
-          width: '100%', padding: '10px', marginTop: 8,
-          background: '#1e3a5f', border: '1px solid #3b82f6',
-          color: '#60a5fa', borderRadius: 8, cursor: 'pointer',
-          fontSize: 13, fontWeight: 600,
-        }}>
-          🔧 Open Segment Builder
-        </button>
-      )}
-
-      <button className="go-btn" onClick={handlePlanRoute}
-        disabled={!sourceLocation || !destLocation || loading}
-        style={{ opacity: (!sourceLocation || !destLocation || loading) ? 0.5 : 1 }}>
-        {loading ? '⏳ Analysing Routes...' : '🚀 Find Routes'}
-      </button>
-
-      {/* AI Recommendation */}
-      {recommendations && (
-        <div style={{ marginTop: 12, padding: 12, background: '#1e3a5f', borderRadius: 10, border: '1px solid #3b82f6' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#60a5fa', marginBottom: 6 }}>🤖 AI RECOMMENDATION</div>
-          <div style={{ fontSize: 13, color: '#e2e8f0', marginBottom: 4 }}>
-            Recommended: <strong>{recommendations.recommended_mode}</strong>
-            {' '}| ₹{recommendations.estimated_cost_min}-{recommendations.estimated_cost_max}
-            {' '}| ⏱️ ~{recommendations.estimated_time_minutes}min
-            {' '}| Safety: {'🟢'.repeat(Math.floor((recommendations.safety_rating || 5) / 2))}
-          </div>
-          {recommendations.tips?.length > 0 && (
-            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>💡 Tips: {recommendations.tips.slice(0, 3).join(' · ')}</div>
-          )}
-          {recommendations.current_issues?.length > 0 && (
-            <div style={{ fontSize: 11, color: '#fbbf24', marginTop: 2 }}>⚠️ {recommendations.current_issues.slice(0, 2).join(' · ')}</div>
-          )}
-        </div>
-      )}
-
-      {/* Weather + Insights */}
-      {weather && (
-        <div style={{ marginTop: 8, padding: '6px 10px', background: '#0f172a', borderRadius: 8, fontSize: 11, color: '#94a3b8', display: 'flex', gap: 12 }}>
-          <span>🌤️ {weather.condition} | {weather.temperature_celsius}°C</span>
-          {weather.traffic_alert && <span>🚦 {weather.traffic_alert}</span>}
-          {weather.recommendation && <span>💬 {weather.recommendation}</span>}
-        </div>
-      )}
-      {insights && (
-        <div className="insights-box" style={{ marginTop: 8 }}>💡 {insights}</div>
-      )}
-
-      {/* Ride / Cab Prices */}
-      {ridePrices.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <h3 style={{ fontSize: 13, marginBottom: 8, color: '#94a3b8' }}>🚗 Ride / Cab Price Estimates</h3>
-          {ridePrices.map((rp, i) => (
-            <div key={i} style={{ padding: '8px 10px', marginBottom: 4, background: '#0f172a', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 12, color: '#e2e8f0' }}>{rp.provider} · {rp.mode.replace(/_/g, ' ')}</div>
-                <div style={{ fontSize: 10, color: '#94a3b8' }}>⏱️ {rp.eta_minutes} min {rp.note ? `· ${rp.note}` : ''}</div>
-              </div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#fbbf24' }}>₹{rp.price}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {ridePricesLoading && <div className="loading" style={{ marginTop: 12 }}>Fetching ride prices...</div>}
-
-      {/* Routes */}
-      {routes.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ fontSize: 13, color: '#94a3b8', margin: 0 }}>🗺️ {routes.length} routes found</h3>
-            {travelMode === 'public' && (
-              <button onClick={handleOpenSegmentPanel} style={{ background: '#1e3a5f', border: '1px solid #3b82f6', color: '#60a5fa', borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer' }}>
-                🔧 Segment Builder
+      <div className="glass-strong ambient-shadow" style={{ padding: 12, borderRadius: 'var(--radius-xl)', marginBottom: 12, position: 'relative' }}>
+        <div style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', marginBottom: 6, borderRadius: 'var(--radius-md)', background: 'var(--surface-container-lowest)', border: '1px solid var(--outline-variant)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--secondary)', fontVariationSettings: "'FILL' 1" }}>my_location</span>
+            <input type="text" placeholder="Current Location..."
+              value={sourceQuery}
+              onChange={(e) => setSourceQuery(e.target.value)}
+              style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', color: 'var(--text)' }}
+            />
+            {sourceQuery && (
+              <button onClick={() => { setSourceQuery(''); setSourceLocation(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
               </button>
             )}
           </div>
-          {routes.map((route, i) => (
-            <RouteCard key={i} route={route} isSelected={selectedRoute === i} onSelect={() => setSelectedRoute(i)} isRecommended={i === 0} rank={i + 1}
-              getLegColor={(m) => legColors[m] || '#64748b'} getModeIcon={getModeIcon} getModeLabel={getModeLabel}
-              formatDuration={formatDuration} formatRupees={formatRupees} getScoreColor={getScoreColor} getScoreLabel={getScoreLabel} />
-          ))}
-        </div>
-      )}
-
-      {!sourceLocation && !destLocation && !loading && routes.length === 0 && (
-        <div className="no-data" style={{ marginTop: 20 }}>Enter source and destination to plan your route</div>
-      )}
-    </div>
-  )
-}
-
-function RouteCard({ route, isSelected, onSelect, isRecommended, rank, getLegColor, getModeIcon, getModeLabel, formatDuration, formatRupees, getScoreColor, getScoreLabel }: {
-  route: RouteOption; isSelected: boolean; onSelect: () => void; isRecommended?: boolean; rank?: number
-  getLegColor: (m: string) => string; getModeIcon: (m: string) => string; getModeLabel: (m: string) => string
-  formatDuration: (m: number) => string; formatRupees: (v: number) => string
-  getScoreColor: (s: number) => string; getScoreLabel: (s: number) => string
-}) {
-  const totalMin = route.total_duration_minutes || 1
-  const [expanded, setExpanded] = useState(isSelected)
-  useEffect(() => { if (isSelected) setExpanded(true) }, [isSelected])
-
-  return (
-    <div className={`route-card ${isSelected ? 'selected' : ''}`} onClick={onSelect}
-      style={{ borderColor: isRecommended ? '#22c55e' : isSelected ? '#3b82f6' : '#334155', borderWidth: isRecommended ? 2 : 1 }}>
-      <div className="route-header">
-        <div className="route-type">
-          {getModeIcon(route.type)} {route.type.replace(/_/g, ' ').toUpperCase()}
-          {isRecommended && <span className="recommended-label">⭐ Best</span>}
-          {isSelected && <span className="recommended-label">Selected</span>}
-          {rank && <span className="recommended-label" style={{ background: '#1e3a5f', color: '#60a5fa' }}>#{rank}</span>}
-        </div>
-        <span style={{ fontSize: 18, fontWeight: 700, color: getScoreColor(route.overall_score) }}>{formatRupees(route.total_fare)}</span>
-      </div>
-
-      <div className="route-stats">
-        <span>⏱️ {formatDuration(route.total_duration_minutes)}</span>
-        <span>📏 {route.total_distance_km.toFixed(1)} km</span>
-        <span>🚶 {route.total_walking_km.toFixed(2)} km walk</span>
-        <span style={{ color: getScoreColor(route.overall_score) }}>⭐ {getScoreLabel(route.overall_score)} ({route.overall_score})</span>
-      </div>
-
-      <div className="score-bar"><div className="score-fill" style={{ width: `${route.overall_score}%`, background: getScoreColor(route.overall_score) }} /></div>
-
-      {route.score_explanation && (
-        <div style={{ marginTop: 4, fontSize: 10, color: '#94a3b8', lineHeight: 1.4 }}>
-          💡 {route.score_explanation}
-        </div>
-      )}
-
-      {route.route_numbers?.length > 0 && (
-        <div style={{ marginTop: 6, marginBottom: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 9, color: '#64748b' }}>🚌 Routes:</span>
-          {route.route_numbers.map((rn, i) => (
-            <span key={i} style={{ fontSize: 9, background: '#1e293b', padding: '1px 6px', borderRadius: 4, color: '#60a5fa', fontWeight: 600, border: '1px solid #334155' }}>{rn}</span>
-          ))}
-        </div>
-      )}
-
-      {route.legs?.length > 0 && (
-        <div style={{ marginTop: 6, marginBottom: 6 }}>
-          <div style={{ display: 'flex', height: 16, borderRadius: 6, overflow: 'hidden', gap: 2 }}>
-            {route.legs.map((leg, j) => {
-              const pct = Math.max(5, (leg.duration_minutes / totalMin) * 100)
-              return (
-                <div key={j} title={`${getModeLabel(leg.mode)}: ${formatDuration(leg.duration_minutes)}`}
-                  style={{ width: `${pct}%`, background: getLegColor(leg.mode), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontSize: 9, lineHeight: '16px' }}>{getModeIcon(leg.mode)}</span>
+          {sourceSuggestions.length > 0 && (
+            <div className="glass" style={{ position: 'absolute', left: 0, right: 0, top: 48, zIndex: 100, borderRadius: 'var(--radius-md)', boxShadow: '0 8px 32px var(--shadow-primary)', maxHeight: 160, overflowY: 'auto' }}>
+              {sourceSuggestions.map((s, i) => (
+                <div key={i} onClick={() => pickSource(s)}
+                  style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: i < sourceSuggestions.length - 1 ? '1px solid var(--outline-variant)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: 'var(--text-muted)' }}>location_on</span>
+                  {s}
                 </div>
-              )
-            })}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#64748b', marginTop: 2 }}>
-            <span>{route.legs[0].from.slice(0, 12)}</span>
-            <span>{route.legs[route.legs.length - 1].to.slice(0, 12)}</span>
-          </div>
-        </div>
-      )}
-
-      <div onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }} style={{ fontSize: 10, color: '#60a5fa', cursor: 'pointer', marginTop: 4 }}>
-        {expanded ? '▲ Hide details' : '▼ Show details'}
-      </div>
-
-      {expanded && (
-        <div className="route-legs">
-          {route.legs?.map((leg, j) => (
-            <div key={j} className="route-leg" style={{ padding: '4px 6px', marginBottom: 2, background: '#0f172a', borderRadius: 6 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span style={{ color: getLegColor(leg.mode) }}>{getModeIcon(leg.mode)}</span>
-                <span style={{ fontSize: 11, color: '#e2e8f0' }}>{getModeLabel(leg.mode)}</span>
-                {leg.line && <span style={{ fontSize: 10, padding: '1px 4px', background: '#1e293b', borderRadius: 3, color: '#94a3b8' }}>{leg.line}</span>}
-                <span style={{ fontSize: 10, color: '#64748b' }}>{leg.distance_km > 0 ? `${leg.distance_km.toFixed(1)} km` : ''}</span>
-                <span style={{ fontSize: 10, color: '#64748b' }}>{formatDuration(leg.duration_minutes)}</span>
-                {leg.fare > 0 && <span style={{ fontSize: 11, color: '#fbbf24' }}>{formatRupees(leg.fare)}</span>}
-              </div>
-              <div style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>{leg.from.slice(0, 25)} → {leg.to.slice(0, 25)}</div>
-              {(leg as any).route_numbers?.length > 0 && (
-                <div style={{ display: 'flex', gap: 3, marginTop: 2 }}>
-                  <span style={{ fontSize: 9, color: '#64748b' }}>Bus:</span>
-                  {(leg as any).route_numbers.map((rn: string, ri: number) => (
-                    <span key={ri} style={{ fontSize: 8, background: '#1e3a5f', padding: '1px 5px', borderRadius: 3, color: '#60a5fa', fontWeight: 600 }}>{rn}</span>
-                  ))}
-                </div>
-              )}
-              {leg.instructions && <div style={{ fontSize: 9, color: '#94a3b8', fontStyle: 'italic', marginTop: 1 }}>💡 {leg.instructions}</div>}
+              ))}
             </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--surface-container-lowest)', border: '1px solid var(--outline-variant)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--error)', fontVariationSettings: "'FILL' 1" }}>location_on</span>
+            <input type="text" placeholder="Where to?"
+              value={destQuery}
+              onChange={(e) => setDestQuery(e.target.value)}
+              style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', color: 'var(--text)' }}
+            />
+            {destQuery && (
+              <button onClick={() => { setDestQuery(''); setDestLocation(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+              </button>
+            )}
+          </div>
+          <button onClick={swapLocations}
+            style={{ width: 36, height: 36, borderRadius: '50%', border: '1px solid var(--outline-variant)', background: 'var(--surface-container-lowest)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--text-muted)' }}>swap_vert</span>
+          </button>
+        </div>
+        {destSuggestions.length > 0 && (
+          <div className="glass" style={{ position: 'absolute', left: 0, right: 52, zIndex: 100, borderRadius: 'var(--radius-md)', boxShadow: '0 8px 32px var(--shadow-primary)', maxHeight: 160, overflowY: 'auto' }}>
+            {destSuggestions.map((s, i) => (
+              <div key={i} onClick={() => pickDest(s)}
+                style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: i < destSuggestions.length - 1 ? '1px solid var(--outline-variant)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14, color: 'var(--text-muted)' }}>location_on</span>
+                {s}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mode-selector" style={{ marginTop: 8 }}>
+          {([
+            { key: 'transport', icon: 'directions_transit', label: 'Public / Online' },
+            { key: 'drive', icon: 'directions_car', label: 'Drive' },
+            { key: 'walk', icon: 'directions_walk', label: 'Walk' },
+          ] as { key: SubMode; icon: string; label: string }[]).map(m => (
+            <button key={m.key}
+              onClick={() => setSubMode(m.key)}
+              className={`mode-btn${subMode === m.key ? ' active' : ''}`}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16, verticalAlign: 'middle', marginRight: 4 }}>{m.icon}</span>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {subMode === 'transport' && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          {([
+            { key: 'segment', icon: 'layers', label: 'Multi-Hop Transit' },
+            { key: 'direct', icon: 'local_taxi', label: 'Direct Ride' },
+          ] as { key: TransportType; icon: string; label: string }[]).map(t => (
+            <button key={t.key} onClick={() => setTransportType(t.key)}
+              className={`mode-btn${transportType === t.key ? ' active' : ''}`}
+              style={{ fontSize: 12, padding: '8px 10px' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }}>{t.icon}</span>
+              {t.label}
+            </button>
           ))}
         </div>
       )}
+
+      <div className="preferences-panel">
+        <div className="pref-row">
+          <span><span className="material-symbols-outlined" style={{ fontSize: 16, verticalAlign: 'middle', marginRight: 4 }}>group</span> Group Size</span>
+          <input type="number" min={1} max={20} value={groupSize}
+            onChange={(e) => setGroupSize(Math.max(1, parseInt(e.target.value) || 1))} />
+        </div>
+        <div className="pref-row">
+          <span><span className="material-symbols-outlined" style={{ fontSize: 16, verticalAlign: 'middle', marginRight: 4 }}>payments</span> Budget (₹)</span>
+          <input type="number" min={0} placeholder="No limit" value={budget || ''}
+            onChange={(e) => setBudget(e.target.value ? parseInt(e.target.value) : undefined)} />
+        </div>
+      </div>
+
+      <button onClick={handleFindRoutes} disabled={loading || !sourceLocation || !destLocation} className="go-btn">
+        <><span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: 'middle', marginRight: 6 }}>route</span> Find Routes</>
+      </button>
+
+      {loading && (
+        <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+          <div className="spinner" style={{ width: 32, height: 32, margin: '0 auto 10px' }} />
+          <div style={{ fontSize: 13 }}>Finding routes<span className="loading">...</span></div>
+        </div>
+      )}
+
+      {segmentsLoading && !loading && (
+        <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <div className="spinner" style={{ width: 16, height: 16 }} />
+          Loading multi-hop segments<span className="loading">...</span>
+        </div>
+      )}
+
+      {error && (
+        <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--error-container)', color: 'var(--error)', fontSize: 13, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>error</span>
+          {error}
+        </div>
+      )}
+
+      {transportType === 'direct' && subMode === 'transport' && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--primary)' }}>local_taxi</span>
+            <span className="text-headline-sm">Ride Options</span>
+            <button onClick={() => setShowPrices(!showPrices)}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: 12 }}>
+              {showPrices ? 'Hide' : 'Show prices'}
+            </button>
+          </div>
+          {showPrices && ridePrices.length > 0 && ridePrices.map((p, i) => {
+            const driveRoute = routes.find(r => r.type === 'car' || r.type === 'drive' || r.type === 'personal')
+            const isSelected = selectedRouteKey === `ride-${i}`
+            return (
+            <div key={i} onClick={() => {
+              setSelectedRouteKey(`ride-${i}`)
+              if (driveRoute?.geometry?.coordinates) {
+                onRouteGeometry([{
+                  type: 'route', color: 'var(--primary)', weight: 5,
+                  coordinates: driveRoute.geometry.coordinates.map((c: any) => [c[1], c[0]]),
+                }])
+              }
+            }}
+              className={`scale-in${isSelected ? ' route-card selected' : ''}`}
+              style={{
+                padding: '10px 14px', marginBottom: 6, borderRadius: 'var(--radius-md)',
+                background: isSelected ? 'var(--primary-container)' : 'var(--surface-container)',
+                border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--outline-variant)'}`,
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--primary)' }}>
+                    {p.mode === 'auto' ? 'pedal_bike' : p.mode === 'bike' ? 'motorcycle' : 'local_taxi'}
+                  </span>
+                  <div>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{p.provider}</span>
+                    <span className="text-body-sm" style={{ color: 'var(--text-muted)', marginLeft: 6 }}>{p.mode}</span>
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--primary)' }}>₹{p.price}</div>
+              </div>
+              <div className="text-body-sm" style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                ETA: {p.eta_minutes} min {p.note ? `• ${p.note}` : ''}
+              </div>
+            </div>
+          )})}
+          {showPrices && ridePrices.length === 0 && (
+            <div className="text-body-md" style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 12 }}>
+              Click "Find Routes" to see ride prices
+            </div>
+          )}
+        </div>
+      )}
+
+      {transportType !== 'segment' && top5.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--primary)' }}>route</span>
+            <span className="text-headline-sm">{subMode === 'transport' ? 'Ride Options' : subMode === 'drive' ? 'Driving Options' : 'Walking Routes'}</span>
+          </div>
+
+          {top5.map((route, idx) => {
+            const isBest = idx === 0
+            const routeKey = getRouteKey(route)
+            const isSelected = selectedRouteKey === routeKey
+            return (
+              <div key={routeKey} onClick={() => setSelectedRouteKey(routeKey)}
+                className={`route-card${isSelected ? ' selected' : ''}`} style={{
+                  borderLeft: `4px solid ${getScoreColor(route.overall_score)}`,
+                  padding: 12, marginBottom: 8,
+                }}>
+                {isBest && (
+                  <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                    <span className="badge-best">Best Match</span>
+                    <span className="reliability-pill" style={{ background: getScoreColor(route.overall_score), color: 'white' }}>
+                      Score: {route.overall_score}
+                    </span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span className="text-headline-sm">
+                    <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: 'middle', marginRight: 4 }}>
+                      {route.type === 'car' || route.type === 'drive' ? 'directions_car' :
+                       route.type === 'walk' ? 'directions_walk' : 'directions_transit'}
+                    </span>
+                    {route.provider || getModeLabel(route.type)}
+                  </span>
+                  <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--primary)' }}>{formatRupees(route.total_fare)}</span>
+                </div>
+
+                <div className="route-stats">
+                  <span><span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 2 }}>schedule</span> {formatDuration(route.total_duration_minutes)}</span>
+                  <span><span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 2 }}>straighten</span> {route.total_distance_km} km</span>
+                  {route.total_walking_km > 0 && <span>🚶 {route.total_walking_km} km walk</span>}
+                  {route.route_numbers?.length ? <span>🚌 {route.route_numbers.join(', ')}</span> : null}
+                </div>
+
+                <div className="score-bar" style={{ marginTop: 6, height: 5, borderRadius: 3 }}>
+                  <div className="score-fill" style={{ width: `${route.overall_score}%`, background: getScoreColor(route.overall_score) }} />
+                </div>
+
+                {route.score_explanation && (
+                  <div className="text-body-sm" style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+                    {route.score_explanation}
+                  </div>
+                )}
+
+                {isSelected && !showHopFlow && (
+                  <button onClick={(e) => {
+                    e.stopPropagation()
+                    setShowHopFlow(true)
+                    setActiveHopIndex(0)
+                    const fl = route.legs?.[0]
+                    if (fl?.path && onRouteGeometry) onRouteGeometry([{ type: 'route', coordinates: fl.path.map(p => [p[1], p[0]]), color: 'var(--primary)', weight: 4 }])
+                  }}
+                    style={{ width: '100%', padding: '8px', marginTop: 8, border: '1px dashed var(--primary)', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>route</span>
+                    View Steps
+                  </button>
+                )}
+
+                {isSelected && showHopFlow && activeHopIndex < (route.legs?.length ?? 0) && (() => {
+                  const leg = route.legs![activeHopIndex]
+                  const isLast = activeHopIndex === route.legs!.length - 1
+                  const modeIcon = leg.mode === 'walk' ? 'directions_walk'
+                    : leg.mode === 'car' || leg.mode === 'drive' ? 'directions_car'
+                    : leg.mode === 'metro' ? 'subway'
+                    : leg.mode === 'train' ? 'train'
+                    : 'directions_bus'
+                  const modeLabel = leg.mode === 'walk' ? 'Walk'
+                    : leg.mode === 'car' || leg.mode === 'drive' ? 'Drive'
+                    : leg.mode === 'metro' ? 'Metro'
+                    : leg.mode === 'train' ? 'Train'
+                    : 'Bus'
+                  return (
+                    <div style={{ marginTop: 8, padding: '12px', background: 'var(--surface-container)', borderRadius: 'var(--radius-md)', border: '1px solid var(--primary)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Step {activeHopIndex + 1} of {route.legs!.length}
+                        </span>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-full)', background: 'var(--primary-container)', color: 'var(--primary)', fontWeight: 600 }}>
+                          {modeLabel}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 6 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 20, color: 'var(--primary)' }}>{modeIcon}</span>
+                        <span style={{ fontWeight: 600, flex: 1 }}>{leg.from}</span>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--text-muted)' }}>arrow_forward</span>
+                        <span style={{ fontWeight: 600, flex: 1, textAlign: 'right' }}>{leg.to}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-muted)', marginBottom: leg.instructions ? 6 : 0, flexWrap: 'wrap' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>schedule</span> {formatDuration(leg.duration_minutes)}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>straighten</span> {leg.distance_km} km</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>payments</span> ₹{leg.fare}</span>
+                      </div>
+                      {leg.instructions && (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 4, padding: '6px 8px', background: 'var(--surface-container-lowest)', borderRadius: 'var(--radius-sm)' }}>
+                          {leg.instructions}
+                        </div>
+                      )}
+                      {leg.route_numbers && leg.route_numbers.length > 0 && (
+                        <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                          {leg.route_numbers.map((rn, ri) => (
+                            <span key={ri} style={{ fontSize: 10, padding: '2px 10px', borderRadius: 'var(--radius-full)', background: 'var(--primary-container)', color: 'var(--primary)', fontWeight: 600 }}>
+                              {rn}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <button onClick={(e) => {
+                        e.stopPropagation()
+                        const nextIdx = activeHopIndex + 1
+                        setActiveHopIndex(nextIdx)
+                        if (nextIdx < route.legs!.length) {
+                          const nextLeg = route.legs![nextIdx]
+                          if (nextLeg?.path && onRouteGeometry) onRouteGeometry([{ type: 'route', coordinates: nextLeg.path.map(p => [p[1], p[0]]), color: 'var(--primary)', weight: 4 }])
+                        }
+                      }}
+                        style={{ width: '100%', padding: '8px', marginTop: 8, border: 'none', borderRadius: 'var(--radius-md)', background: 'var(--secondary)', color: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                        {isLast ? 'Finish' : 'Next'} <span className="material-symbols-outlined" style={{ fontSize: 14 }}>arrow_forward</span>
+                      </button>
+                    </div>
+                  )
+                })()}
+
+                {isSelected && showHopFlow && activeHopIndex >= (route.legs?.length ?? 0) && (
+                  <div style={{ marginTop: 8, padding: '16px', background: 'var(--secondary-container)', borderRadius: 'var(--radius-md)', border: '1px solid var(--secondary)', textAlign: 'center' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 32, color: 'var(--secondary)' }}>location_on</span>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--secondary)', marginTop: 4 }}>Arrived at Destination!</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>You have reached {destQuery || 'your destination'}</div>
+                    <button onClick={(e) => { e.stopPropagation(); setShowHopFlow(false); setActiveHopIndex(0); if (onRouteGeometry) onRouteGeometry(null) }}
+                      style={{ marginTop: 8, padding: '6px 16px', border: '1px solid var(--text-muted)', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}>
+                      Reset
+                    </button>
+                  </div>
+                )}
+
+                {isSelected && (
+                  <button onClick={(e) => {
+                    e.stopPropagation(); startJourney()
+                    if (!showHopFlow) {
+                      setShowHopFlow(true); setActiveHopIndex(0)
+                      const fl = route.legs?.[0]
+                      if (fl?.path && onRouteGeometry) onRouteGeometry([{ type: 'route', coordinates: fl.path.map(p => [p[1], p[0]]), color: 'var(--primary)', weight: 4 }])
+                    }
+                  }}
+                    style={{
+                      width: '100%', padding: '10px', marginTop: 8, border: 'none',
+                      borderRadius: 'var(--radius-md)', background: 'var(--secondary)',
+                      color: 'white', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>play_arrow</span>
+                    Start Journey
+                  </button>
+                )}
+              </div>
+            )
+          })}
+
+          {all.length > 5 && (
+            <details style={{ marginTop: 4 }}>
+              <summary>Show all {all.length} options</summary>
+              {all.slice(5).map((route, idx) => {
+                const routeKey = getRouteKey(route)
+                const isSelected = selectedRouteKey === routeKey
+                return (
+              <div key={routeKey} onClick={() => { setSelectedRouteKey(routeKey); setShowHopFlow(false); setActiveHopIndex(0) }}
+                    className={`route-card${isSelected ? ' selected' : ''}`}
+                    style={{ borderLeft: `3px solid ${getScoreColor(route.overall_score)}`, padding: 10, marginBottom: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>
+                        {route.provider || getModeLabel(route.type)}
+                      </span>
+                      <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 14 }}>{formatRupees(route.total_fare)}</span>
+                    </div>
+                    <div className="route-stats">
+                      <span>{formatDuration(route.total_duration_minutes)}</span>
+                      <span>{route.total_distance_km} km</span>
+                    </div>
+                    <div className="score-bar" style={{ marginTop: 4 }}>
+                      <div className="score-fill" style={{ width: `${route.overall_score}%`, background: getScoreColor(route.overall_score) }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </details>
+          )}
+
+        </div>
+      )}
+
+      {showSegmentModal && segments.length > 0 && (
+            <div className="fade-in" style={{
+              position: 'fixed', inset: 0, zIndex: 10000,
+              background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }} onClick={() => setShowSegmentModal(false)}>
+              <div className="scale-in" style={{
+                width: '90%', maxWidth: 960, maxHeight: '85vh',
+                background: 'var(--surface)', borderRadius: 'var(--radius-xl)',
+                border: '1px solid var(--outline-variant)',
+                boxShadow: '0 24px 80px var(--shadow-primary)',
+                display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              }} onClick={e => e.stopPropagation()}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '14px 18px', borderBottom: '1px solid var(--outline-variant)',
+                  background: 'var(--surface-container)',
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--primary)' }}>layers</span>
+                  <span className="text-headline-sm" style={{ flex: 1 }}>Multi-Hop Transit Planner</span>
+                  <button onClick={() => setShowSegmentModal(false)}
+                    style={{ width: 32, height: 32, border: 'none', borderRadius: 'var(--radius-full)',
+                      background: 'var(--surface-container-high)', color: 'var(--text-muted)',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 16 }}>
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+                <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+                  <SegmentFlowView
+                    segments={segments}
+                    sourceName={sourceQuery || 'Current Location'}
+                    destName={destQuery || 'Destination'}
+                    onRouteGeometry={onRouteGeometry}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
     </div>
   )
 }

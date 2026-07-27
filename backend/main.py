@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import settings
 from backend.core.database import db
 from backend.api import search, routes
-from backend.services.n8n_service import n8n_service
-
+from backend.api.search import langgraph_router
+ 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -22,22 +22,19 @@ app.add_middleware(
 
 app.include_router(search.router)
 app.include_router(routes.router)
+app.include_router(langgraph_router)
 
 @app.on_event("startup")
 async def startup():
-    db.initialize()
-    # Preload GTFS data synchronously (takes ~40s once)
-    from backend.services.transit_service import _ensure_gtfs
-    _ensure_gtfs()
+    import os
+    test_time = os.environ.get("VOYAGER_TEST_TIME")
+    if test_time:
+        from backend.services.gtfs_service import set_test_time
+        set_test_time(test_time)
+        print(f"[MAIN] Test time override: {test_time}")
 
-@app.get("/api/n8n-status")
-async def n8n_status():
-    available = await n8n_service.is_available()
-    return {
-        "status": "available" if available else "unavailable",
-        "webhook_url": settings.N8N_WEBHOOK_URL or "not configured",
-        "note": "n8n handles: place verification, weather/traffic, ride prices, hotel prices"
-    }
+    db.initialize()
+    # GTFS loads lazily on first route request (avoids ~40s startup block)
 
 @app.get("/")
 async def root():
@@ -55,4 +52,5 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "database_initialized": db._initialized}
+#update
 #update

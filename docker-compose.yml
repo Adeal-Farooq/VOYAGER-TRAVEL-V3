@@ -1,0 +1,92 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data_cache:/app/data_cache
+      - ./.env:/app/.env
+    environment:
+      - VOYAGER_TEST_TIME=${VOYAGER_TEST_TIME:-}
+      - OSRM_BASE_URL=http://osrm-car:5000
+      - OSRM_FOOT_URL=http://osrm-foot:5001
+    depends_on:
+      - osrm-car
+      - osrm-foot
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  osrm-car:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./osrm-data:/data
+    command: >
+      sh -c "
+        apt-get update -qq && apt-get install -y -qq curl osmium-tool &&
+        PBF=southern-zone.osm.pbf;
+        BLR_PBF=bangalore.osm.pbf;
+        BLR_OSRM=bangalore.osrm;
+            if [ ! -f /data/$$BLR_PBF ]; then
+              if [ ! -f /data/$$PBF ] || [ \"\$$(stat -c%s /data/$$PBF 2>/dev/null || echo 0)\" -lt 500000000 ]; then
+                echo 'Downloading southern-zone.osm.pbf...' &&
+                curl -L -o /data/$$PBF https://download.geofabrik.de/asia/india/southern-zone-260726.osm.pbf;
+              fi &&
+          echo 'Cropping to Bangalore (77.35,12.80,77.85,13.20)...' &&
+          osmium extract -b 77.35,12.80,77.85,13.20 -o /data/$$BLR_PBF --overwrite /data/$$PBF &&
+          rm -f /data/$$PBF;
+        fi &&
+          if [ ! -f /data/$$BLR_OSRM.properties ]; then
+            echo 'Extracting car profile...' &&
+            osrm-extract -p /opt/car.lua /data/$$BLR_PBF &&
+            echo 'Partitioning...' &&
+            osrm-partition /data/$$BLR_OSRM &&
+            echo 'Customizing...' &&
+            osrm-customize /data/$$BLR_OSRM;
+          fi &&
+          echo 'Starting OSRM car server...' &&
+          osrm-routed --algorithm mld /data/$$BLR_OSRM --port 5000"
+    restart: unless-stopped
+
+  osrm-foot:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./osrm-data-foot:/data
+      - ./osrm-data:/car-data
+    command: >
+      sh -c "
+        apt-get update -qq && apt-get install -y -qq osmium-tool &&
+        if [ ! -f /data/bangalore.osm.pbf ]; then
+          echo 'Copying Bangalore PBF from car data...' &&
+          cp /car-data/bangalore.osm.pbf /data/bangalore.osm.pbf;
+        fi &&
+        BLR_OSRM=bangalore.osrm;
+        if [ ! -f /data/$$BLR_OSRM.cells ]; then
+          rm -f /data/$$BLR_OSRM.* /data/$$BLR_OSRM 2>/dev/null; true &&
+          echo 'Extracting foot profile...' &&
+          osrm-extract -p /opt/foot.lua /data/bangalore.osm.pbf &&
+          echo 'Partitioning...' &&
+          osrm-partition /data/$$BLR_OSRM &&
+          echo 'Customizing...' &&
+          osrm-customize /data/$$BLR_OSRM;
+        fi &&
+        echo 'Starting OSRM foot server...' &&
+        osrm-routed --algorithm mld /data/$$BLR_OSRM --port 5001"
+    restart: unless-stopped
+    depends_on:
+      osrm-car:
+        condition: service_started

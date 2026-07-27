@@ -1,376 +1,171 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap } from 'react-leaflet'
+import { useEffect, useRef, useCallback } from 'react'
+import { MapContainer, TileLayer, useMap, Polyline, Marker, Popup, CircleMarker } from 'react-leaflet'
 import L from 'leaflet'
 import type { PlaceResult, MapRouteGeometry, NewsItem } from '../types'
+import { getPlaceIconName, getScoreLabel, getScoreColor } from '../utils/helpers'
 
 interface MapViewProps {
+  mapRef: React.MutableRefObject<any>
   center: [number, number]
   onCenterChange?: (center: [number, number]) => void
-  selectedPlace: PlaceResult | null
   userLocation: [number, number] | null
+  allMarkers: PlaceResult[]
+  selectedPlace: PlaceResult | null
+  onMarkerClick?: (place: PlaceResult) => void
+  routeGeometry: MapRouteGeometry[] | null
   sourceLocation: [number, number] | null
   destLocation: [number, number] | null
-  mapRef?: React.MutableRefObject<any>
-  allMarkers: PlaceResult[]
-  onMarkerClick?: (place: PlaceResult) => void
-  routeGeometry?: MapRouteGeometry[]
-  onMapClick?: (latlng: [number, number]) => void
-  newsItems?: NewsItem[]
-  waypoints?: { lat: number; lng: number; query: string }[]
-  liveTrackingPos?: [number, number] | null
-  trackingActive?: boolean
+  liveTrackingPos: [number, number] | null
+  trackingActive: boolean
+  newsItems: NewsItem[]
 }
 
-function createColoredPin(color: string, emoji: string, size: number = 28, glow: boolean = false) {
-  const glowStyle = glow ? `filter: drop-shadow(0 0 8px ${color}) brightness(1.3);` : ''
-  return L.divIcon({
-    className: '',
-    html: `<div style="font-size:${size}px;${glowStyle}">${emoji}</div>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size],
-    popupAnchor: [0, -size],
-  })
-}
-
-function MapController({ center, mapRef, onMapClick }: {
+function MapController({ mapRef, onCenterChange, center }: {
+  mapRef: React.MutableRefObject<any>
+  onCenterChange?: (center: [number, number]) => void
   center: [number, number]
-  mapRef?: React.MutableRefObject<any>
-  onMapClick?: (latlng: [number, number]) => void
 }) {
   const map = useMap()
+  mapRef.current = map
+  const cbRef = useRef(onCenterChange)
+  cbRef.current = onCenterChange
   useEffect(() => {
-    if (mapRef) mapRef.current = map
-  }, [map, mapRef])
-
-  useEffect(() => {
-    if (!onMapClick) return
-    const handler = (e: L.LeafletMouseEvent) => onMapClick([e.latlng.lat, e.latlng.lng])
-    map.on('click', handler)
-    return () => { map.off('click', handler) }
-  }, [map, onMapClick])
-
+    if (!cbRef.current) return
+    const handler = () => {
+      const c = map.getCenter()
+      cbRef.current?.([c.lat, c.lng])
+    }
+    map.on('moveend', handler)
+    return () => map.off('moveend', handler)
+  }, [map])
   return null
 }
 
-interface TrafficRoad {
-  geometry: { type: string; coordinates: [number, number][] }
-  properties: { highway: string; color: string; name: string }
-}
-function TrafficLayer() {
-  const map = useMap()
-  const [roads, setRoads] = useState<TrafficRoad[]>([])
-  const [congestion, setCongestion] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [enabled, setEnabled] = useState(false)
-  const moveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const fetchTraffic = useCallback(async () => {
-    const b = map.getBounds()
-    try {
-      setLoading(true)
-      const resp = await fetch(`/api/routes/traffic-overlay?north=${b.getNorth()}&south=${b.getSouth()}&east=${b.getEast()}&west=${b.getWest()}`)
-      const data = await resp.json()
-      if (data.features) setRoads(data.features)
-      if (data.congestion) setCongestion(data.congestion)
-    } catch { /* ignore */ }
-    finally { setLoading(false) }
-  }, [map])
-
-  useEffect(() => {
-    if (!enabled) { setRoads([]); return }
-    fetchTraffic()
-    const handler = () => {
-      if (moveTimer.current) clearTimeout(moveTimer.current)
-      moveTimer.current = setTimeout(fetchTraffic, 800)
-    }
-    map.on('moveend', handler)
-    return () => { map.off('moveend', handler); if (moveTimer.current) clearTimeout(moveTimer.current) }
-  }, [enabled, map, fetchTraffic])
-
+function UserLocationMarker({ position }: { position: [number, number] }) {
   return (
-    <>
-      <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <button onClick={() => setEnabled(!enabled)}
-          style={{
-            padding: '6px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 6,
-            background: enabled ? '#1e3a5f' : '#1e293b', color: enabled ? '#60a5fa' : '#94a3b8',
-            border: enabled ? '1px solid #3b82f6' : '1px solid #475569',
-            transition: 'all 0.2s',
-          }}>
-          🚦 Traffic {enabled ? 'ON' : 'OFF'} {loading ? '...' : congestion ? `(${congestion})` : ''}
-        </button>
-      </div>
-      {enabled && roads.map((road, i) => (
-        <Polyline
-          key={`tr-${i}`}
-          positions={road.geometry.coordinates.map(c => [c[1], c[0]] as [number, number])}
-          pathOptions={{
-            color: road.properties.color,
-            weight: road.properties.highway === 'motorway' || road.properties.highway === 'trunk' ? 4 : road.properties.highway === 'primary' || road.properties.highway === 'secondary' ? 3 : 2,
-            opacity: road.properties.highway === 'motorway' || road.properties.highway === 'trunk' ? 0.8 : 0.5,
-          }}
-        />
-      ))}
-    </>
+    <Marker position={position} icon={L.divIcon({
+      className: '', html: `<div style="position:relative;width:28px;height:28px">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:28px;height:28px;border-radius:50%;background:rgba(0,102,255,0.15);animation:pulse-ring 2s cubic-bezier(0.4,0,0.6,1) infinite;"></div>
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:14px;height:14px;border-radius:50%;background:#0066FF;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>
+      </div>`, iconSize: [28, 28], iconAnchor: [14, 14],
+    })} />
   )
 }
 
-function getPlaceEmoji(placeType: string): string {
-  const emojis: Record<string, string> = {
-    mall: '🛍️', hospital: '🏥', airport: '✈️', railway_station: '🚉',
-    bus_stand: '🚏', park: '🌳', it_hub: '🏢', metro_station: '🚇',
-    bus_stop: '🚏', atm: '🏧', bank: '🏦', restaurant: '🍽️',
-    hotel: '🏨', lodge: '🏨', temple: '🛕', mosque: '🕌', church: '⛪',
-    school: '📚', petrol_pump: '⛽', charging_station: '🔋',
-    police_station: '🚔', cafe: '☕', clinic: '🏥', pharmacy: '💊',
-    supermarket: '🛒', gym: '🏋️', library: '📖', cinema: '🎬',
-    post_office: '📮', place: '📍',
-  }
-  return emojis[placeType] || '📍'
+function createPinHtml(place: PlaceResult): string {
+  const score = place.reliability_score || 0.5
+  const color = getScoreColor(score * 100)
+  const icon = getPlaceIconName(place.place_type)
+  return `<div style="position:relative;width:32px;height:32px;">
+    <div style="position:absolute;top:0;left:0;width:32px;height:32px;border-radius:50%;background:${color};border:2px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-size:16px;color:white;cursor:pointer;transition:all 0.2s;"
+      onmouseover="this.style.transform='scale(1.15)'" onmouseout="this.style.transform='scale(1)'">
+      <span class="material-symbols-outlined" style="font-size:16px;font-variation-settings:'wght'400,'FILL'1">${icon}</span>
+    </div>
+  </div>`
+}
+
+function PlaceMarker({ place, onClick }: { place: PlaceResult; onClick?: (p: PlaceResult) => void }) {
+  const score = place.reliability_score || 0.5
+  return (
+    <Marker position={[place.lat, place.lng]}
+      icon={L.divIcon({ className: '', html: createPinHtml(place), iconSize: [32, 32], iconAnchor: [16, 16] })}
+      eventHandlers={{ click: () => onClick?.(place) }}>
+      <Popup>
+        <div style={{ minWidth: 200 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{place.name}</div>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>{place.place_type.replace(/_/g, ' ')}</div>
+          {place.rating && <div style={{ fontSize: 12, marginBottom: 2 }}>⭐ {place.rating.toFixed(1)}</div>}
+          <div style={{ fontSize: 12, marginBottom: 2 }}>
+            Reliability: <span style={{ color: getScoreColor(score * 100), fontWeight: 600 }}>{(score * 100).toFixed(0)}%</span>
+          </div>
+          {place.review_summary && (
+            <div style={{ fontSize: 11, fontStyle: 'italic', marginTop: 4, color: '#666', lineHeight: 1.4 }}>{place.review_summary}</div>
+          )}
+          {place.hotel_prices && place.hotel_prices.avg_price > 0 && (
+            <div style={{ fontSize: 12, marginTop: 4, color: '#b45309', fontWeight: 500 }}>₹{place.hotel_prices.min_price}-{place.hotel_prices.max_price}/night</div>
+          )}
+        </div>
+      </Popup>
+    </Marker>
+  )
 }
 
 export default function MapView({
-  center, selectedPlace, userLocation, sourceLocation,
-  destLocation, mapRef, allMarkers, onMarkerClick,
-  routeGeometry, onMapClick, newsItems, waypoints,
-  liveTrackingPos, trackingActive,
+  mapRef, center, onCenterChange, userLocation,
+  allMarkers, selectedPlace, onMarkerClick,
+  routeGeometry, sourceLocation, destLocation,
+  liveTrackingPos, trackingActive, newsItems,
 }: MapViewProps) {
-  const userIcon = useMemo(() => createColoredPin('#3b82f6', '📍', 32, true), [])
-  const sourceIcon = useMemo(() => createColoredPin('#3b82f6', '🟢', 24), [])
-  const destIcon = useMemo(() => createColoredPin('#ef4444', '🔴', 24), [])
-
-  const polylineColors: Record<string, string> = {
-    metro: '#22c55e', metro_interchange: '#059669',
-    walk: '#94a3b8', walk_to_bus: '#94a3b8', walk_to_metro: '#94a3b8',
-    walk_from_bus: '#94a3b8', walk_from_metro: '#94a3b8',
-    bus_ordinary: '#3b82f6', bus_ac_vajra: '#8b5cf6',
-    car: '#f97316', driving: '#f97316',
-  }
 
   return (
-    <MapContainer
-      center={center}
-      zoom={13}
-      style={{ width: '100%', height: '100%' }}
-      zoomControl={true}
-    >
-      <MapController center={center} mapRef={mapRef} onMapClick={onMapClick} />
-      <TrafficLayer />
-
+    <MapContainer center={center} zoom={13} style={{ width: '100%', height: '100%', background: '#e8e8ec' }}
+      zoomControl={true}>
+      <MapController mapRef={mapRef} onCenterChange={onCenterChange} center={center} />
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; <a href="https://openstreetmap.org/copyright">OSM</a>'
       />
 
-      {/* Route polylines - white outline */}
-      {routeGeometry?.map((rg, i) => {
-        const coords = rg.coordinates.map(c => [c[0], c[1]] as [number, number])
-        const isMain = rg.type === 'route'
-        const isWalk = rg.label?.toLowerCase().includes('walk') || rg.dashArray === '8, 6'
-        const w = rg.weight || (rg.type === 'hover' ? 7 : isMain ? 6 : 4)
-        return (
-          <Polyline
-            key={`route-outline-${i}`}
-            positions={coords}
-            pathOptions={{
-              color: '#ffffff',
-              weight: w + (isMain ? 4 : 2),
-              opacity: 1,
-              lineCap: 'round',
-              lineJoin: 'round',
-            }}
-          />
-        )
-      })}
-      {/* Route polylines - colored fill (solid for transit, dashed for walking) */}
-      {routeGeometry?.filter(rg => rg.type !== 'stop').map((rg, i) => {
-        const coords = rg.coordinates.map(c => [c[0], c[1]] as [number, number])
-        const isMain = rg.type === 'route'
-        const isWalk = rg.label?.toLowerCase().includes('walk') || rg.dashArray === '10, 6'
-        const w = rg.weight || (rg.type === 'hover' ? 7 : isMain ? 6 : 4)
-        return (
-          <Polyline
-            key={`route-color-${i}`}
-            positions={coords}
-            pathOptions={{
-              color: rg.color,
-              weight: w,
-              opacity: rg.type === 'hover' ? 0.95 : 0.85,
-              dashArray: isWalk ? '10, 6' : rg.dashArray,
-              lineCap: 'round',
-              lineJoin: 'round',
-            }}
-          />
-        )
-      })}
+      {userLocation && !trackingActive && <UserLocationMarker position={userLocation} />}
+      {liveTrackingPos && trackingActive && <UserLocationMarker position={liveTrackingPos} />}
 
-      {/* Transit stop markers */}
-      {routeGeometry?.filter(rg => rg.type === 'stop').map((rg, i) => (
-        <CircleMarker key={`stop-${i}`}
-          center={[rg.coordinates[0][0], rg.coordinates[0][1]]}
-          radius={6}
-          pathOptions={{ color: '#22c55e', fillColor: '#22c55e33', fillOpacity: 0.6, weight: 2 }}
-        >
-          {rg.label && <Popup>{rg.label}</Popup>}
-        </CircleMarker>
+      {allMarkers.map((place, i) => (
+        <PlaceMarker key={i} place={place} onClick={onMarkerClick} />
       ))}
 
-      {/* News affected-area markers */}
-      {newsItems?.map((item, i) => {
-        if (!item.lat || !item.lng) return null
-        const bgColor = item.impact === 'negative' ? '#ef4444' : item.impact === 'positive' ? '#22c55e' : '#3b82f6'
-        const emoji = item.impact === 'negative' ? '⚠️' : item.impact === 'positive' ? '✅' : 'ℹ️'
-        return (
-          <Marker
-            key={`news-${i}`}
-            position={[item.lat, item.lng]}
-            icon={L.divIcon({
-              className: '',
-              html: `<div style="font-size:18px;filter:drop-shadow(0 0 6px ${bgColor});text-align:center">${emoji}</div>`,
-              iconSize: [24, 24],
-              iconAnchor: [12, 12],
-            })}
-          >
-            <Popup>
-              <div style={{ minWidth: 160 }}>
-                <strong>{item.title}</strong><br />
-                <span style={{ fontSize: 11, color: '#666' }}>{item.description}</span>
-                <div style={{ fontSize: 10, color: '#999', marginTop: 4 }}>{item.timestamp}</div>
-              </div>
-            </Popup>
-          </Marker>
+      {selectedPlace && !allMarkers.some(m => m.name === selectedPlace.name && m.lat === selectedPlace.lat) && (
+        <Marker position={[selectedPlace.lat, selectedPlace.lng]} icon={L.divIcon({
+          className: '', html: `<div style="width:36px;height:36px;border-radius:50%;background:#8b5cf6;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(139,92,246,0.5);font-size:18px;color:white;animation:pulse-ring 2s cubic-bezier(0.4,0,0.6,1) infinite;"><span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL'1">star</span></div>`,
+          iconSize: [36, 36], iconAnchor: [18, 18],
+        })}>
+          <Popup>{selectedPlace.name}</Popup>
+        </Marker>
+      )}
+
+      {routeGeometry?.map((geo, i) => (
+        geo.type === 'stop' ? (
+          <CircleMarker key={i} center={geo.coordinates[0]} radius={6}
+            pathOptions={{ color: geo.color, fillColor: geo.color, fillOpacity: 0.8, weight: 2 }}>
+            {geo.label && <Popup>{geo.label}</Popup>}
+          </CircleMarker>
+        ) : (
+          <Polyline key={i} positions={geo.coordinates}
+            pathOptions={{
+              color: geo.color, weight: geo.weight || 4, opacity: 0.85,
+              dashArray: geo.dashArray,
+              lineCap: 'round', lineJoin: 'round',
+            }}>
+            {geo.label && <Popup>{geo.label}</Popup>}
+          </Polyline>
         )
-      })}
-
-      {userLocation && !trackingActive && (
-        <Marker position={userLocation} icon={userIcon}>
-          <Popup>
-            <strong>📍 Your Location</strong>
-            <br />
-            <span style={{ fontSize: 12, color: '#666' }}>
-              {userLocation[0].toFixed(4)}, {userLocation[1].toFixed(4)}
-            </span>
-          </Popup>
-        </Marker>
-      )}
-
-      {liveTrackingPos && (
-        <Marker position={liveTrackingPos} icon={createColoredPin('#22c55e', '🟢', 36, true)}>
-          <Popup>
-            <strong>📍 Live Position</strong>
-            <br />
-            <span style={{ fontSize: 12, color: '#666' }}>
-              {liveTrackingPos[0].toFixed(4)}, {liveTrackingPos[1].toFixed(4)}
-            </span>
-            <br />
-            <span style={{ fontSize: 11, color: '#22c55e' }}>🚶 Tracking active</span>
-          </Popup>
-        </Marker>
-      )}
+      ))}
 
       {sourceLocation && (
-        <Marker position={sourceLocation} icon={sourceIcon}>
+        <Marker position={sourceLocation} icon={L.divIcon({
+          className: '', html: `<div style="width:32px;height:32px;border-radius:50%;background:#22c55e;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(34,197,94,0.4);font-size:16px;color:white;"><span class="material-symbols-outlined" style="font-size:16px;font-variation-settings:'FILL'1">trip_origin</span></div>`,
+          iconSize: [32, 32], iconAnchor: [16, 16],
+        })}>
           <Popup>Source</Popup>
         </Marker>
       )}
 
       {destLocation && (
-        <Marker position={destLocation} icon={destIcon}>
+        <Marker position={destLocation} icon={L.divIcon({
+          className: '', html: `<div style="position:relative;width:40px;height:40px;"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;border-radius:50%;background:rgba(239,68,68,0.15);animation:pulse-ring 2s cubic-bezier(0.4,0,0.6,1) infinite;"></div><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;border-radius:50%;background:#ef4444;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(239,68,68,0.4);font-size:18px;color:white;"><span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL'1">location_on</span></div></div>`,
+          iconSize: [40, 40], iconAnchor: [20, 20],
+        })}>
           <Popup>Destination</Popup>
         </Marker>
       )}
 
-      {allMarkers.map((place, i) => {
-        const score = place.reliability_score || 0.5
-        const isGood = score > 0.7
-        const emoji = getPlaceEmoji(place.place_type)
-        const isSelected = selectedPlace &&
-          Math.abs(place.lat - selectedPlace.lat) < 0.001 &&
-          Math.abs(place.lng - selectedPlace.lng) < 0.001
-
-        const icon = L.divIcon({
-          className: '',
-          html: `<div style="font-size:${isSelected ? 34 : 24}px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3))">${isGood ? '🟢' : '🔴'}${emoji}</div>`,
-          iconSize: [isSelected ? 34 : 24, isSelected ? 34 : 24],
-          iconAnchor: [isSelected ? 17 : 12, isSelected ? 34 : 24],
-          popupAnchor: [0, isSelected ? -34 : -24],
-        })
-
-        return (
-          <Marker
-            key={`marker-${i}`}
-            position={[place.lat, place.lng]}
-            icon={icon}
-            eventHandlers={{
-              click: () => onMarkerClick?.(place),
-            }}
-          >
-            <Popup>
-              <div style={{ minWidth: 180 }}>
-                <strong>{place.name}</strong><br />
-                <span style={{ fontSize: 12, color: '#666' }}>{place.address}</span>
-                <div style={{ marginTop: 6, fontSize: 12 }}>
-                  ⭐ {place.rating?.toFixed(1) || 'N/A'} | ✅ {((place.reliability_score || 0.5) * 100).toFixed(0)}%
-                </div>
-                {place.review_summary && (
-                  <div style={{ marginTop: 4, fontSize: 11, color: '#666', fontStyle: 'italic' }}>
-                    {place.review_summary}
-                  </div>
-                )}
-                {place.price_info && (
-                  <div style={{ marginTop: 4, fontSize: 12, color: '#f59e0b' }}>
-                    💰 {place.price_info}
-                  </div>
-                )}
-                <button
-                  onClick={() => onMarkerClick?.(place)}
-                  style={{
-                    marginTop: 8, padding: '4px 12px',
-                    background: '#2563eb', color: 'white',
-                    border: 'none', borderRadius: 4, cursor: 'pointer',
-                    fontSize: 12
-                  }}
-                >
-                  View Details
-                </button>
-              </div>
-            </Popup>
-          </Marker>
-        )
-      })}
-
-      {selectedPlace && allMarkers.length === 0 && (
-        <Marker
-          position={[selectedPlace.lat, selectedPlace.lng]}
-          icon={L.divIcon({
-            className: '',
-            html: `<div style="font-size:32px;filter:drop-shadow(0 2px 8px rgba(37,99,235,0.5))">🔵${getPlaceEmoji(selectedPlace.place_type)}</div>`,
-            iconSize: [32, 32],
-            iconAnchor: [16, 32],
-          })}
-        >
+      {newsItems.filter(n => n.lat && n.lng).map((item, i) => (
+        <Marker key={i} position={[item.lat!, item.lng!]} icon={L.divIcon({
+          className: '', html: `<div style="width:24px;height:24px;border-radius:50%;background:${item.impact === 'positive' ? '#22c55e' : item.impact === 'negative' ? '#ef4444' : '#3b82f6'};border:2px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-size:12px;color:white;">!</div>`,
+          iconSize: [24, 24], iconAnchor: [12, 12],
+        })}>
           <Popup>
-            <strong>{selectedPlace.name}</strong><br />
-            <span style={{ fontSize: 12, color: '#666' }}>{selectedPlace.address}</span>
-          </Popup>
-        </Marker>
-      )}
-
-      {/* Waypoint markers (multi-stop) */}
-      {waypoints?.map((wp, i) => (
-        <Marker
-          key={`wp-${i}`}
-          position={[wp.lat, wp.lng]}
-          icon={L.divIcon({
-            className: '',
-            html: `<div style="font-size:20px;filter:drop-shadow(0 2px 6px rgba(245,158,11,0.8))">🟠<span style="position:absolute;top:-4px;left:10px;background:#f59e0b;color:#000;font-size:10px;font-weight:bold;padding:1px 4px;border-radius:8px;line-height:14px">${i+1}</span></div>`,
-            iconSize: [28, 28],
-            iconAnchor: [14, 28],
-          })}
-        >
-          <Popup>
-            <strong>📍 Stop {i + 1}</strong><br />
-            <span style={{ fontSize: 12, color: '#666' }}>{wp.query || `Waypoint ${i + 1}`}</span>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{item.title}</div>
+            <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{item.description}</div>
           </Popup>
         </Marker>
       ))}

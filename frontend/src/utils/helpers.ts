@@ -113,11 +113,64 @@ export function getScoreLabel(score: number): string {
   return 'Avoid'
 }
 
-export function getPinColor(isRecommended: boolean, score?: number): string {
-  if (score !== undefined) {
-    if (score >= 80) return '#22c55e'
-    if (score >= 60) return '#eab308'
-    return '#ef4444'
+export function getModeIconName(mode: string): string {
+  const map: Record<string, string> = {
+    walk: 'directions_walk',
+    bus_ordinary: 'directions_bus',
+    bus_ac_vajra: 'airport_shuttle',
+    metro: 'subway',
+    metro_interchange: 'transfer_within_a_station',
+    car: 'directions_car',
+    bike: 'pedal_bike',
+    auto: 'local_taxi',
+    cab: 'local_taxi',
+    cab_xl: 'van',
+    cab_women: 'female',
+    cab_pet: 'pets',
+    bike_taxi: 'pedal_bike',
+    interchange: 'sync_alt',
+    driving: 'directions_car',
+    kia_bus: 'airport_shuttle',
+    train: 'train',
+    bus_to_metro: 'directions_bus',
+    metro_to_bus: 'subway',
   }
-  return isRecommended ? '#22c55e' : '#ef4444'
+  return map[mode] || 'directions_transit'
+}
+
+export function getPlaceIconName(placeType: string): string {
+  const map: Record<string, string> = {
+    mall: 'local_mall',
+    hospital: 'local_hospital',
+    clinic: 'local_hospital',
+    airport: 'flight',
+    railway_station: 'train',
+    bus_stop: 'directions_bus',
+    bus_stand: 'directions_bus',
+    park: 'park',
+    it_hub: 'business_center',
+    metro_station: 'subway',
+    atm: 'account_balance',
+    bank: 'account_balance',
+    restaurant: 'restaurant',
+    cafe: 'local_cafe',
+    hotel: 'hotel',
+    lodge: 'lodging',
+    temple: 'temple_hindu',
+    mosque: 'mosque',
+    church: 'church',
+    school: 'school',
+    college: 'school',
+    university: 'school',
+    petrol_pump: 'local_gas_station',
+    charging_station: 'ev_station',
+    police_station: 'local_police',
+    pharmacy: 'local_pharmacy',
+    supermarket: 'local_grocery_store',
+    gym: 'fitness_center',
+    library: 'local_library',
+    cinema: 'theater_comedy',
+    post_office: 'mark_as_unread',
+  }
+  return map[placeType] || 'location_on'
 }
