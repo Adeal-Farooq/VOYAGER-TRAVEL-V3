@@ -33,6 +33,8 @@ interface AppState {
   setNearbyResults: (results: PlaceResult[]) => void
   searchCenter: [number, number] | null
   setSearchCenter: (center: [number, number] | null) => void
+  searchRadius: number
+  setSearchRadius: (radius: number) => void
 
   showDiscovery: boolean
   discoveryPlace: PlaceResult | null
@@ -83,6 +85,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [searchResults, setSearchResults] = useState<PlaceResult[]>([])
   const [nearbyResults, setNearbyResults] = useState<PlaceResult[]>([])
   const [searchCenter, setSearchCenter] = useState<[number, number] | null>(null)
+  const [searchRadius, setSearchRadius] = useState(2)
 
   const [showDiscovery, setShowDiscovery] = useState(false)
   const [discoveryPlace, setDiscoveryPlace] = useState<PlaceResult | null>(null)
@@ -166,7 +169,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       sourceQuery, setSourceQuery, destQuery, setDestQuery,
       selectedPlace, setSelectedPlace, allMarkers, setAllMarkers,
       searchResults, setSearchResults, nearbyResults, setNearbyResults,
-      searchCenter, setSearchCenter,
+      searchCenter, setSearchCenter, searchRadius, setSearchRadius,
       showDiscovery, discoveryPlace, openDiscovery, closeDiscovery,
       routeGeometry, setRouteGeometry, newsItems, setNewsItems,
       ridePrices, setRidePrices,

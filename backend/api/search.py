@@ -101,7 +101,7 @@ async def enrich_place(body: dict):
             geocoding_service.enrich_single_place(name, lat, lng, place_type, address), timeout=25.0
         )
     except asyncio.TimeoutError:
-        enriched = {"name": name, "rating": 4.0, "review_summary": "No reviews yet", "reliability_score": 0.7}
+        enriched = {"name": name, "rating": 3.0, "review_summary": "No reviews yet", "reliability_score": 0.5}
     return {"status": "success", "place": enriched}
 
 @router.get("/ride-prices")

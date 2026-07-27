@@ -51,6 +51,10 @@ def _sanitize(val, default=0.0):
     except (ValueError, TypeError):
         return default
 
+def _score_from_rating(rating: float) -> float:
+    r = _sanitize(rating, 3.0)
+    return round(min(r, 5.0) / 5, 2)
+
 class GeocodingService:
 
     async def search_places(self, query: str, lat: float = None, lng: float = None) -> list[dict]:
@@ -62,18 +66,27 @@ class GeocodingService:
         results = []
         seen_coords = set()
 
+        is_blr = lat is not None and lng is not None and self._in_bangalore(lat, lng)
+        osm_query = f"{query}, Bengaluru" if is_blr else query
+        osm_lat, osm_lng = (lat, lng) if is_blr else (None, None)
+
         # Always run both OSM and AI in parallel for maximum coverage
-        osm_task = self._osm_search(query, lat, lng)
+        osm_task = self._osm_search(osm_query, osm_lat, osm_lng)
         ai_task = self._ai_search(query, lat, lng)
         osm_results, ai_results = await asyncio.gather(osm_task, ai_task, return_exceptions=True)
         if isinstance(osm_results, Exception): osm_results = []
         if isinstance(ai_results, Exception): ai_results = []
 
+        center_lat = lat or 12.9716
+        center_lng = lng or 77.5946
+
         for r in osm_results:
             key = (round(r["lat"], 4), round(r["lng"], 4))
             if key not in seen_coords:
                 seen_coords.add(key)
-                results.append(r)
+                r["distance_km"] = round(geodesic((center_lat, center_lng), (r["lat"], r["lng"])).km, 2)
+                if not is_blr or r["distance_km"] <= 50:
+                    results.append(r)
 
         query_lower = query.lower().strip()
         for stop_id, stop in db.bus_stops.items():
@@ -83,8 +96,10 @@ class GeocodingService:
                 key = (round(stop["lat"], 4), round(stop["lng"], 4))
                 if key not in seen_coords:
                     seen_coords.add(key)
-                    results.append(self._make_result(name, stop["lat"], stop["lng"], "bus_stop",
-                        "", 0.9, 4.0))
+                    d = round(geodesic((center_lat, center_lng), (stop["lat"], stop["lng"])).km, 2)
+                    if not is_blr or d <= 50:
+                        results.append(self._make_result(name, stop["lat"], stop["lng"], "bus_stop",
+                            "", 0.9, 4.0, distance_km=d))
 
         for station in db.metro_stations:
             if not isinstance(station, dict): continue
@@ -93,22 +108,30 @@ class GeocodingService:
                 key = (round(station["lat"], 4), round(station["lng"], 4))
                 if key not in seen_coords:
                     seen_coords.add(key)
-                    results.append(self._make_result(name, station["lat"], station["lng"], "metro_station",
-                        "", 0.95, 4.3))
+                    d = round(geodesic((center_lat, center_lng), (station["lat"], station["lng"])).km, 2)
+                    if not is_blr or d <= 50:
+                        results.append(self._make_result(name, station["lat"], station["lng"], "metro_station",
+                            "", 0.95, 4.3, distance_km=d))
 
         # Merge AI results (these fill gaps for places not in OSM/database)
         for r in ai_results:
             key = (round(r["lat"], 4), round(r["lng"], 4))
             if key not in seen_coords:
                 seen_coords.add(key)
-                r["review_source"] = "llm"
-                results.append(r)
+                r["distance_km"] = round(geodesic((center_lat, center_lng), (r["lat"], r["lng"])).km, 2)
+                if not is_blr or r["distance_km"] <= 50:
+                    r["review_source"] = "llm"
+                    results.append(r)
 
         for r in results:
             r["lat"] = _sanitize(r.get("lat"))
             r["lng"] = _sanitize(r.get("lng"))
             r["rating"] = _sanitize(r.get("rating", 4.0), 4.0)
-            r["reliability_score"] = _sanitize(r.get("reliability_score", 0.8), 0.8)
+            rr = _sanitize(r.get("rating", 4.0), 4.0)
+            r["reliability_score"] = _sanitize(r.get("reliability_score", _score_from_rating(rr)), _score_from_rating(rr))
+
+        # Sort by distance so nearest results appear first
+        results.sort(key=lambda x: x.get("distance_km", 999))
 
         # Return raw results immediately — enrichment happens on-demand via enrich_single_place
         out = results[:15]
@@ -134,8 +157,8 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
 
             for r in (results or []):
                 if not isinstance(r, dict): continue
-                r["reliability_score"] = r.get("reliability_score", round(min(r.get("rating", 4.0) / 5, 0.95), 2))
-                r["is_recommended"] = r.get("is_recommended", r.get("reliability_score", 0.5) > 0.6)
+                r["reliability_score"] = r.get("reliability_score", _score_from_rating(r.get("rating", 4.0)))
+                r["is_recommended"] = r.get("is_recommended", r.get("reliability_score", 0.6) > 0.6)
                 r["review_summary"] = r.get("review_summary", "")
                 r["address"] = r.get("address", f"{r.get('name', query)}, Bengaluru")
 
@@ -191,6 +214,14 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
         else:
             osm_results = await self._osm_nearby(lat, lng, radius_km, place_type)
 
+        # If OSM returned nothing and radius is small, try wider radius
+        if not osm_results and radius_km < 5:
+            wider = min(radius_km * 2.5, 10.0)
+            if place_type is None:
+                osm_results = await self._osm_nearby(lat, lng, wider, None)
+            elif not (in_blr and place_type in ("bus_stop", "metro_station")):
+                osm_results = await self._osm_nearby(lat, lng, wider, place_type)
+
         for r in osm_results:
             key = (round(r["lat"], 4), round(r["lng"], 4))
             if key not in seen_coords:
@@ -205,7 +236,7 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                     if key not in seen_coords:
                         seen_coords.add(key)
                         results.append(self._make_result(stop["name"], stop["lat"], stop["lng"], "bus_stop",
-                            "", 0.9, 4.0, distance_km=stop["distance_km"]))
+                            "", rating=4.0, distance_km=stop["distance_km"]))
 
             if not place_type or place_type == "metro_station":
                 for station in db.find_nearby_metro_stations(lat, lng, radius_km):
@@ -213,7 +244,7 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                     if key not in seen_coords:
                         seen_coords.add(key)
                         results.append(self._make_result(station["name"], station["lat"], station["lng"], "metro_station",
-                            "", 0.95, 4.3, distance_km=station["distance_km"]))
+                            "", rating=4.3, distance_km=station["distance_km"]))
 
         if not results:
             try:
@@ -232,12 +263,14 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
             r["lat"] = _sanitize(r.get("lat"))
             r["lng"] = _sanitize(r.get("lng"))
             r["rating"] = _sanitize(r.get("rating", 4.0), 4.0)
-            r["reliability_score"] = _sanitize(r.get("reliability_score", 0.8), 0.8)
+            rr2 = _sanitize(r.get("rating", 4.0), 4.0)
+            r["reliability_score"] = _sanitize(r.get("reliability_score", _score_from_rating(rr2)), _score_from_rating(rr2))
             if "distance_km" in r:
                 r["distance_km"] = _sanitize(r["distance_km"])
 
+        # Sort by distance before enrichment so we enrich nearest results first
+        results.sort(key=lambda x: x.get("distance_km", 999))
         enriched = await self._enrich_results(results[:12], light=True)
-        enriched.sort(key=lambda x: x.get("distance_km", 999))
         return enriched[:20]
 
     async def _osm_nearby(self, lat: float, lng: float, radius_km: float, place_type: str = None) -> list[dict]:
@@ -390,16 +423,17 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                 logger.warning(f"Enrich results gather failed: {e}")
 
         for r in results:
+            r3_rating = r.get("rating", 4.0) or 4.0
             r.setdefault("rating", 4.0)
-            r.setdefault("reliability_score", 0.75)
+            r.setdefault("reliability_score", _score_from_rating(r3_rating))
             r.setdefault("review_summary", "")
-            r.setdefault("is_recommended", r.get("reliability_score", 0.75) > 0.6)
+            r.setdefault("is_recommended", r.get("reliability_score", 0.6) > 0.6)
             r.setdefault("address", f"{r['name']}, Bengaluru")
 
         return results
 
     async def enrich_single_place(self, name: str, lat: float, lng: float, place_type: str, address: str) -> dict:
-        result = self._make_result(name, lat, lng, place_type, "", 0.8, 4.0)
+        result = self._make_result(name, lat, lng, place_type, "", rating=4.0)
         result["address"] = address or f"{name}, Bengaluru"
 
         # Real reviews via LangChain
@@ -407,7 +441,9 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
             web_reviews = await llm_agent.get_real_reviews(name, address)
             if web_reviews:
                 if web_reviews.get("rating"): result["rating"] = float(web_reviews["rating"])
-                if web_reviews.get("reliability_score"): result["reliability_score"] = float(web_reviews["reliability_score"])
+                # compute reliability from the enriched rating rather than using review-count-based score
+                enriched_rating = float(web_reviews.get("rating", result.get("rating", 4.0)))
+                result["reliability_score"] = _score_from_rating(enriched_rating)
                 if web_reviews.get("review_summary"): result["review_summary"] = web_reviews["review_summary"]
                 if web_reviews.get("is_recommended") is not None: result["is_recommended"] = bool(web_reviews["is_recommended"])
                 if web_reviews.get("reviews"): result["reviews"] = web_reviews.get("reviews", [])[:4]
@@ -482,15 +518,17 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
         return await llm_agent.verify_place(name, address)
 
     def _make_result(self, name: str, lat: float, lng: float, place_type: str,
-                      review: str, reliability: float, rating: float,
+                      review: str, reliability: float = None, rating: float = None,
                       address: str = None, distance_km: float = None) -> dict:
+        r_rating = _sanitize(rating, 4.0) if rating is not None else 4.0
+        r_rel = _sanitize(reliability, _score_from_rating(r_rating)) if reliability is not None else _score_from_rating(r_rating)
         r = {
             "name": name, "lat": _sanitize(lat), "lng": _sanitize(lng),
             "place_type": place_type,
-            "rating": _sanitize(rating, 4.0), "review_summary": review,
+            "rating": r_rating, "review_summary": review,
             "address": address or f"{name}, Bengaluru",
-            "reliability_score": _sanitize(reliability, 0.8),
-            "is_recommended": _sanitize(reliability, 0.8) > 0.6,
+            "reliability_score": r_rel,
+            "is_recommended": r_rel > 0.6,
         }
         if distance_km is not None:
             r["distance_km"] = round(_sanitize(distance_km), 2)

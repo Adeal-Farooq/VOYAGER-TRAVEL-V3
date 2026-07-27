@@ -21,6 +21,7 @@ export default function MainPage() {
     routeGeometry, setRouteGeometry,
     newsItems, setNewsItems,
     openDiscovery, showDiscovery, discoveryPlace,
+    searchCenter, searchRadius,
   } = useApp()
 
   const [enrichingName, setEnrichingName] = useState<string | null>(null)
@@ -33,6 +34,9 @@ export default function MainPage() {
 
   const handleViewDetails = useCallback(async (place: PlaceResult) => {
     setEnrichingName(place.name)
+    setSelectedPlace(place)
+    setMapCenter([place.lat, place.lng])
+    if (mapRef.current) mapRef.current.flyTo([place.lat, place.lng], 16, { duration: 0.8 })
     try {
       const enriched = await enrichPlace(place)
       if (enriched?.status === 'success' && enriched.place) {
@@ -40,15 +44,13 @@ export default function MainPage() {
         setSelectedPlace(fullPlace)
         openDiscovery(fullPlace)
       } else {
-        setSelectedPlace(place)
         openDiscovery(place)
       }
     } catch {
-      setSelectedPlace(place)
       openDiscovery(place)
     }
     setEnrichingName(null)
-  }, [setSelectedPlace, openDiscovery])
+  }, [setSelectedPlace, openDiscovery, setMapCenter, mapRef])
 
   const {
     setSourceLocation: setSrcLoc,
@@ -144,6 +146,8 @@ export default function MainPage() {
           liveTrackingPos={liveTrackingPos}
           trackingActive={trackingActive}
           newsItems={newsItems}
+          searchCenter={searchCenter}
+          searchRadius={searchRadius}
         />
 
         {showDiscovery && discoveryPlace && mode === 'search' && (
