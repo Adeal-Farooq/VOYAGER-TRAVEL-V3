@@ -29,3 +29,4 @@ for stop_id, stops_data in gtfs._stops.items():
         print(f"  {sname:45s} ({lat:.4f},{lng:.4f}) dist={dist:.2f}km")
         count += 1
 print(f"Total GTFS stops within 2km: {count}")
+print(f"km")
