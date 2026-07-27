@@ -1,4 +1,4 @@
-station_code,station_name,line,sequence,is_interchange,next_station_code,latitude,longitude,distance_to_next_km,line_color
+﻿station_code,station_name,line,sequence,is_interchange,next_station_code,latitude,longitude,distance_to_next_km,line_color
 WHTM,Whitefield (Kadugodi),Purple Line,1,0,UWVL,12.995699152518254,77.75773036744444,1.04,#7E22CE
 UWVL,Hopefarm Channasandra,Purple Line,2,0,KDGD,12.987287989039856,77.75362905487141,0.79,#7E22CE
 KDGD,Kadugodi Tree Park,Purple Line,3,0,ITPL,12.98564895914214,77.74649441242647,0.97,#7E22CE

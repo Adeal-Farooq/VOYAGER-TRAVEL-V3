@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>WayFinder - A-to-B Planner</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "inverse-surface": "#2f3131",
+                      "tertiary-container": "#680002",
+                      "primary-fixed-dim": "#bdc2ff",
+                      "primary-fixed": "#e0e0ff",
+                      "primary-container": "#1a237e",
+                      "secondary-fixed-dim": "#78dc77",
+                      "on-tertiary": "#ffffff",
+                      "surface-dim": "#dadada",
+                      "surface-bright": "#f9f9f9",
+                      "on-secondary-fixed-variant": "#005313",
+                      "primary": "#000666",
+                      "outline": "#767683",
+                      "tertiary-fixed": "#ffdad5",
+                      "on-tertiary-fixed": "#410001",
+                      "on-primary": "#ffffff",
+                      "secondary-container": "#91f78e",
+                      "on-secondary-fixed": "#002204",
+                      "surface-tint": "#4c56af",
+                      "surface-container": "#eeeeee",
+                      "outline-variant": "#c6c5d4",
+                      "on-secondary": "#ffffff",
+                      "tertiary": "#400001",
+                      "on-tertiary-fixed-variant": "#930005",
+                      "surface-container-high": "#e8e8e8",
+                      "on-background": "#1a1c1c",
+                      "on-secondary-container": "#00731e",
+                      "secondary-fixed": "#94f990",
+                      "on-primary-fixed": "#000767",
+                      "on-primary-fixed-variant": "#343d96",
+                      "on-tertiary-container": "#ff6555",
+                      "secondary": "#006e1c",
+                      "inverse-on-surface": "#f1f1f1",
+                      "surface-variant": "#e2e2e2",
+                      "surface-container-lowest": "#ffffff",
+                      "tertiary-fixed-dim": "#ffb4a9",
+                      "on-primary-container": "#8690ee",
+                      "surface-container-low": "#f3f3f3",
+                      "inverse-primary": "#bdc2ff",
+                      "background": "#f9f9f9",
+                      "error": "#ba1a1a",
+                      "surface": "#f9f9f9",
+                      "on-error-container": "#93000a",
+                      "surface-container-highest": "#e2e2e2",
+                      "on-surface": "#1a1c1c",
+                      "on-error": "#ffffff",
+                      "on-surface-variant": "#454652",
+                      "error-container": "#ffdad6"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "margin-desktop": "32px",
+                      "stack-lg": "24px",
+                      "stack-md": "16px",
+                      "stack-sm": "8px",
+                      "margin-mobile": "16px",
+                      "unit": "4px",
+                      "gutter": "16px"
+              },
+              "fontFamily": {
+                      "headline-lg-mobile": [
+                              "Inter", "sans-serif"
+                      ],
+                      "body-md": [
+                              "Inter", "sans-serif"
+                      ],
+                      "body-lg": [
+                              "Inter", "sans-serif"
+                      ],
+                      "headline-md": [
+                              "Inter", "sans-serif"
+                      ],
+                      "label-md": [
+                              "Inter", "sans-serif"
+                      ],
+                      "label-sm": [
+                              "Inter", "sans-serif"
+                      ],
+                      "headline-lg": [
+                              "Inter", "sans-serif"
+                      ]
+              },
+              "fontSize": {
+                      "headline-lg-mobile": [
+                              "24px",
+                              {
+                                      "lineHeight": "30px",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "body-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "body-lg": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-md": [
+                              "20px",
+                              {
+                                      "lineHeight": "28px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-md": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-sm": [
+                              "11px",
+                              {
+                                      "lineHeight": "14px",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "headline-lg": [
+                              "30px",
+                              {
+                                      "lineHeight": "38px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .glass-panel {
+            background-color: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(198, 197, 212, 0.3);
+        }
+        
+        .ambient-shadow {
+            box-shadow: 0 8px 32px rgba(0, 6, 102, 0.08);
+        }
+        
+        .ambient-shadow-lg {
+            box-shadow: 0 16px 48px rgba(0, 6, 102, 0.12);
+        }
+
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* Segment Line */
+        .segment-line {
+            position: absolute;
+            left: 19px;
+            top: 24px;
+            bottom: -24px;
+            width: 2px;
+            background-color: #e2e2e2;
+            z-index: 0;
+        }
+        .segment-line.active {
+            background-color: #000666; /* primary */
+        }
+        .segment-last .segment-line {
+            display: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background h-screen w-full overflow-hidden flex flex-col font-sans antialiased relative">
+<!-- Map Background Image Placeholder -->
+<div class="absolute inset-0 z-0 w-full h-full bg-cover bg-center" data-alt="A clean, high-fidelity digital transit map in light mode, showing intricate road networks, highlighted metro and bus routes in vibrant blue and green against a pale, subtle gray-white background. The map style is modern, corporate, and highly detailed, reflecting a professional navigation interface aesthetic." data-location="Bangalore" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDK4v7W38Aor5HuD7WLGCGNJU_a9pdELJa2lh_TwntrfSS-ija1zE0TVmKnvzGSACnQaqpIWyY-ptj00ynEwpVn2sIRx6KiGswNxXmK3d72t_TAjUljBSgJYvEtJvN3XsQ2nSemXZLrCgFw93s8kU6CVeUGiX7rUNBl0Rk6fGL_nDtErxWXCvX9iIGldJEOViru2_lvbO8-RgeEKZatV5Hb_LOAbB4glZ31Ff7wtaW4yhJh2QgDtbb3lGiJo_jO63PcqLt__tT8wdIp')"></div>
+<!-- Top Navigation AppBar (Desktop & Mobile) -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-margin-mobile py-stack-sm md:px-margin-desktop bg-surface/80 dark:bg-inverse-surface/80 backdrop-blur-xl border-b border-outline-variant/30 shadow-sm">
+<div class="flex items-center gap-3">
+<button class="p-2 text-primary dark:text-primary-fixed-dim hover:bg-surface-variant/50 dark:hover:bg-surface-container-high/50 transition-colors rounded-full active:scale-95 duration-150">
+<span class="material-symbols-outlined" data-icon="menu">menu</span>
+</button>
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg font-bold text-primary dark:text-primary-fixed-dim tracking-tight">WayFinder</h1>
+</div>
+<!-- Desktop Nav Links -->
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-on-surface-variant hover:bg-surface-variant/50 transition-colors px-4 py-2 rounded-full font-label-md text-label-md" href="#">Search</a>
+<a class="text-primary font-bold hover:bg-surface-variant/50 transition-colors px-4 py-2 rounded-full font-label-md text-label-md active:scale-95 duration-150" href="#">A-to-B</a>
+<a class="text-on-surface-variant hover:bg-surface-variant/50 transition-colors px-4 py-2 rounded-full font-label-md text-label-md" href="#">Trip</a>
+</nav>
+<div class="flex items-center">
+<button class="w-10 h-10 rounded-full overflow-hidden border-2 border-primary/20 hover:border-primary/50 transition-colors">
+<img alt="User Profile" class="w-full h-full object-cover" data-alt="A small, professional avatar portrait of a modern urban commuter with a neutral, friendly expression, set against a clean light background fitting a sleek navigation app interface." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBpT4q04wMOpUcGVQ_vzBbs2uWF8mmZ4Ta6h48n6pc61BWqqaskDNGkBd1Dn3zK7x3RIZppxtiuldSdHrnETAoBOjifkMtO_tMPVvZ4ziCRAryhoNMx_Bi8b3v5wnEjB2EtOBDjalvRhtlBRX1ah3PfBHhut6qsM2lL5ZM6O45NaCESURS8v0zLeSjBtVGR4yc_x_pbQCJXzCLyGluEXjEi0QlgqBFrsV774Z6glIo9v9EsCeBEiTUdvwYgAJu__fePxhA924JLRDcQ"/>
+</button>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="relative z-10 flex-1 w-full h-full pt-[72px] pb-[88px] md:pb-0 flex flex-col md:flex-row pointer-events-none">
+<!-- Left/Top Floating Search Panel -->
+<section class="pointer-events-auto w-full md:w-[400px] p-margin-mobile md:p-margin-desktop flex-shrink-0 z-20">
+<div class="glass-panel rounded-2xl p-4 ambient-shadow flex flex-col gap-3 relative">
+<!-- Swap Button -->
+<button class="absolute right-6 top-1/2 -translate-y-1/2 bg-surface hover:bg-surface-variant text-primary rounded-full p-2 shadow-sm transition-all z-10 border border-outline-variant/30">
+<span class="material-symbols-outlined text-lg" data-icon="swap_vert">swap_vert</span>
+</button>
+<!-- From Input -->
+<div class="relative flex items-center bg-surface-container-lowest rounded-xl border border-outline-variant/50 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary transition-all overflow-hidden h-12">
+<div class="pl-3 pr-2 text-secondary flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]" data-icon="my_location" data-weight="fill" style="font-variation-settings: 'FILL' 1;">my_location</span>
+</div>
+<input class="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline p-0" placeholder="Choose starting point" type="text" value="Current Location"/>
+</div>
+<!-- To Input -->
+<div class="relative flex items-center bg-surface-container-lowest rounded-xl border border-outline-variant/50 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary transition-all overflow-hidden h-12">
+<div class="pl-3 pr-2 text-error flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]" data-icon="location_on" data-weight="fill" style="font-variation-settings: 'FILL' 1;">location_on</span>
+</div>
+<input class="w-full bg-transparent border-none focus:ring-0 font-body-md text-body-md text-on-surface placeholder:text-outline p-0" placeholder="Choose destination" type="text" value="Wonderla"/>
+</div>
+<!-- Filters / Transport Modes -->
+<div class="flex gap-2 mt-2 overflow-x-auto hide-scrollbar pb-1">
+<button class="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary-container text-on-primary-container border border-primary/20 font-label-sm text-label-sm transition-colors">
+<span class="material-symbols-outlined text-[16px]" data-icon="tune">tune</span>
+                        Best Route
+                    </button>
+<button class="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container text-on-surface-variant border border-outline-variant/30 hover:bg-surface-variant font-label-sm text-label-sm transition-colors">
+<span class="material-symbols-outlined text-[16px]" data-icon="directions_bus">directions_bus</span>
+                        Public
+                    </button>
+<button class="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container text-on-surface-variant border border-outline-variant/30 hover:bg-surface-variant font-label-sm text-label-sm transition-colors">
+<span class="material-symbols-outlined text-[16px]" data-icon="directions_car">directions_car</span>
+                        Personal
+                    </button>
+</div>
+</div>
+</section>
+<!-- Spacer for mobile to push Bottom Sheet down -->
+<div class="flex-1 md:hidden"></div>
+<!-- Bottom/Right Segment Window (Journey Details) -->
+<section class="pointer-events-auto w-full md:w-[420px] md:fixed md:right-margin-desktop md:top-[104px] md:bottom-margin-desktop flex flex-col z-30 transition-transform duration-300">
+<!-- Mobile Grab Handle Area -->
+<div class="md:hidden w-full flex justify-center py-2 glass-panel rounded-t-3xl border-b-0 -mb-4 relative z-40">
+<div class="w-12 h-1.5 bg-outline-variant rounded-full"></div>
+</div>
+<div class="glass-panel flex-1 rounded-t-3xl md:rounded-2xl ambient-shadow-lg flex flex-col overflow-hidden h-[530px] md:h-full relative">
+<!-- Route Header -->
+<div class="p-5 border-b border-outline-variant/20 bg-surface-container-lowest/50 shrink-0">
+<div class="flex justify-between items-start mb-2">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="px-2 py-0.5 rounded-md bg-secondary-container text-on-secondary-container font-label-sm text-label-sm uppercase tracking-wider font-bold">Best Match</span>
+<span class="text-outline font-label-sm text-label-sm">Topsis Recommended</span>
+</div>
+<h2 class="font-headline-md text-headline-md text-on-surface font-bold">1 hr 15 min</h2>
+</div>
+<div class="text-right">
+<span class="font-headline-md text-headline-md text-primary font-bold">₹145</span>
+</div>
+</div>
+<div class="text-on-surface-variant font-body-md text-body-md flex items-center gap-1">
+                        Leave at 12:15 PM • Arrive by 1:30 PM
+                    </div>
+</div>
+<!-- Scrollable Segments -->
+<div class="flex-1 overflow-y-auto p-5 relative hide-scrollbar">
+<!-- Segment 1: Walk -->
+<div class="relative pl-10 pb-6">
+<div class="segment-line"></div>
+<div class="absolute left-0 top-0 w-10 h-10 flex items-center justify-center bg-surface-container border-2 border-outline-variant rounded-full z-10">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="directions_walk">directions_walk</span>
+</div>
+<div class="pt-2">
+<h3 class="font-label-md text-label-md text-on-surface font-bold">Walk to Bus Stop</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">5 min (400m)</p>
+</div>
+</div>
+<!-- Segment 2: Bus -->
+<div class="relative pl-10 pb-6">
+<div class="segment-line active"></div>
+<div class="absolute left-0 top-0 w-10 h-10 flex items-center justify-center bg-secondary text-on-secondary border-2 border-surface rounded-full z-10 shadow-sm">
+<span class="material-symbols-outlined" data-icon="directions_bus" data-weight="fill" style="font-variation-settings: 'FILL' 1;">directions_bus</span>
+</div>
+<div class="pt-1 bg-surface-container-lowest p-3 rounded-xl border border-outline-variant/30 mt-1 hover:border-secondary transition-colors cursor-pointer">
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 bg-secondary/10 text-secondary font-label-sm text-label-sm rounded font-bold">507-D</span>
+<h3 class="font-label-md text-label-md text-on-surface font-bold">Bus towards Majestic</h3>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">12:20 PM</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant mb-2">12 stops • 35 min</p>
+<!-- Reliability Badge -->
+<div class="flex items-center gap-1.5 text-secondary font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]" data-icon="check_circle" data-weight="fill" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                High Reliability (92/100) • On Time
+                            </div>
+</div>
+</div>
+<!-- Segment 3: Metro -->
+<div class="relative pl-10 pb-6">
+<div class="segment-line active"></div>
+<div class="absolute left-0 top-0 w-10 h-10 flex items-center justify-center bg-[#800080] text-white border-2 border-surface rounded-full z-10 shadow-sm">
+<span class="material-symbols-outlined" data-icon="subway" data-weight="fill" style="font-variation-settings: 'FILL' 1;">subway</span>
+</div>
+<div class="pt-1 bg-surface-container-lowest p-3 rounded-xl border border-outline-variant/30 mt-1 hover:border-[#800080] transition-colors cursor-pointer">
+<div class="flex items-center justify-between mb-1">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 bg-[#800080]/10 text-[#800080] font-label-sm text-label-sm rounded font-bold">Purple Line</span>
+<h3 class="font-label-md text-label-md text-on-surface font-bold">Metro towards Kengeri</h3>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">1:00 PM</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant">6 stops • 20 min</p>
+</div>
+</div>
+<!-- Segment 4: Walk -->
+<div class="relative pl-10 segment-last">
+<div class="segment-line"></div>
+<div class="absolute left-0 top-0 w-10 h-10 flex items-center justify-center bg-surface-container border-2 border-outline-variant rounded-full z-10">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="directions_walk">directions_walk</span>
+</div>
+<div class="pt-2">
+<h3 class="font-label-md text-label-md text-on-surface font-bold">Walk to Wonderla</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">10 min (800m)</p>
+<p class="font-label-sm text-label-sm text-primary mt-1 font-bold">Arrive around 1:30 PM</p>
+</div>
+</div>
+</div>
+<!-- AI Insights Footer -->
+<div class="p-4 bg-primary-fixed-dim/20 border-t border-primary-fixed-dim/40 shrink-0">
+<div class="flex items-start gap-3">
+<div class="mt-0.5 text-primary">
+<span class="material-symbols-outlined" data-icon="temp_preferences_custom" data-weight="fill" style="font-variation-settings: 'FILL' 1;">temp_preferences_custom</span>
+</div>
+<div>
+<h4 class="font-label-sm text-label-sm text-primary font-bold uppercase tracking-wider mb-1">AI Travel Insight</h4>
+<p class="font-body-md text-body-md text-on-surface-variant italic">"Baarish hone wali hai, cab better rahegi if you want to avoid walking the last 800m."</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Navigation Bar (Mobile Only) -->
+<nav class="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-center pb-safe pointer-events-auto">
+<div class="floating pill-shaped rounded-full mx-auto mb-6 w-[90%] max-w-md bg-surface/80 dark:bg-inverse-surface/80 backdrop-blur-xl border border-outline-variant/20 shadow-[0_8px_30px_rgb(0,6,102,0.15)] dark:shadow-none flex justify-around items-center py-2 px-2">
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-2 hover:text-primary dark:hover:text-primary-fixed-dim transition-all w-1/3" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="search">search</span>
+<span class="font-label-sm text-label-sm">Search</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-primary dark:bg-primary-container text-on-primary dark:text-on-primary-container rounded-full px-6 py-2 scale-90 duration-200 ease-in-out w-1/3" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="directions_transit" data-weight="fill" style="font-variation-settings: 'FILL' 1;">directions_transit</span>
+<span class="font-label-sm text-label-sm font-bold">A-to-B</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-2 hover:text-primary dark:hover:text-primary-fixed-dim transition-all w-1/3" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="map">map</span>
+<span class="font-label-sm text-label-sm">Trip</span>
+</a>
+</div>
+</nav>
+</body></html>

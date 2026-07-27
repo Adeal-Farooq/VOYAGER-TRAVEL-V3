@@ -1,0 +1,82 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data_cache:/app/data_cache
+      - ./.env:/app/.env
+    environment:
+      - VOYAGER_TEST_TIME=${VOYAGER_TEST_TIME:-}
+      - OSRM_BASE_URL=http://osrm-car:5000
+    depends_on:
+      - osrm-car
+      - osrm-foot
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  osrm-car:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./osrm-data:/data
+    command: >
+      sh -c "
+        apt-get update -qq && apt-get install -y -qq curl &&
+        if [ ! -f /data/southern-zone.osrm.properties ]; then
+          if [ ! -f /data/southern-zone.osm.pbf ] || [ \"\$(stat -c%s /data/southern-zone.osm.pbf 2>/dev/null || echo 0)\" -lt 500000000 ]; then
+            echo 'Downloading southern-zone.osm.pbf...' &&
+            curl -L -o /data/southern-zone.osm.pbf https://download.geofabrik.de/asia/india/southern-zone-latest.osm.pbf;
+          fi &&
+          echo 'Extracting car profile...' &&
+          osrm-extract -p /opt/car.lua /data/southern-zone.osm.pbf &&
+          echo 'Partitioning...' &&
+          osrm-partition /data/southern-zone.osrm &&
+          echo 'Customizing...' &&
+          osrm-customize /data/southern-zone.osrm;
+        fi &&
+        echo 'Starting OSRM car server...' &&
+        osrm-routed --algorithm mld /data/southern-zone.osrm --port 5000"
+    restart: unless-stopped
+
+  osrm-foot:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./osrm-data-foot:/data
+      - ./osrm-data:/car-data
+    command: >
+      sh -c "
+        apt-get update -qq && apt-get install -y -qq curl &&
+        if [ ! -f /data/southern-zone.osrm.cells ]; then
+          rm -f /data/southern-zone.osrm.* /data/*.osm.pbf 2>/dev/null; true &&
+          if [ ! -f /data/southern-zone.osm.pbf ]; then
+            echo 'Copying PBF from car data...' &&
+            cp /car-data/southern-zone.osm.pbf /data/southern-zone.osm.pbf;
+          fi &&
+          echo 'Extracting foot profile...' &&
+          osrm-extract -p /opt/foot.lua /data/southern-zone.osm.pbf &&
+          echo 'Partitioning...' &&
+          osrm-partition /data/southern-zone.osrm &&
+          echo 'Customizing...' &&
+          osrm-customize /data/southern-zone.osrm;
+        fi &&
+        echo 'Starting OSRM foot server...' &&
+        osrm-routed --algorithm mld /data/southern-zone.osrm --port 5001"
+    restart: unless-stopped
+    depends_on:
+      osrm-car:
+        condition: service_started

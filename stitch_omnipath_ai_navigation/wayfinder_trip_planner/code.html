@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Trip Planner - WayFinder</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error-container": "#93000a",
+                        "on-primary-fixed": "#000767",
+                        "surface": "#f9f9f9",
+                        "secondary-fixed": "#94f990",
+                        "surface-container-highest": "#e2e2e2",
+                        "error": "#ba1a1a",
+                        "on-secondary-fixed": "#002204",
+                        "surface-container": "#eeeeee",
+                        "on-tertiary": "#ffffff",
+                        "on-secondary-fixed-variant": "#005313",
+                        "tertiary-fixed-dim": "#ffb4a9",
+                        "on-primary-fixed-variant": "#343d96",
+                        "on-tertiary-fixed": "#410001",
+                        "on-primary": "#ffffff",
+                        "on-error": "#ffffff",
+                        "tertiary-container": "#680002",
+                        "surface-bright": "#f9f9f9",
+                        "on-tertiary-fixed-variant": "#930005",
+                        "secondary": "#006e1c",
+                        "on-tertiary-container": "#ff6555",
+                        "tertiary": "#400001",
+                        "inverse-on-surface": "#f1f1f1",
+                        "primary-container": "#1a237e",
+                        "on-background": "#1a1c1c",
+                        "surface-variant": "#e2e2e2",
+                        "surface-dim": "#dadada",
+                        "primary-fixed": "#e0e0ff",
+                        "error-container": "#ffdad6",
+                        "surface-tint": "#4c56af",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed-dim": "#78dc77",
+                        "on-surface": "#1a1c1c",
+                        "outline": "#767683",
+                        "inverse-surface": "#2f3131",
+                        "surface-container-low": "#f3f3f3",
+                        "secondary-container": "#91f78e",
+                        "outline-variant": "#c6c5d4",
+                        "primary-fixed-dim": "#bdc2ff",
+                        "surface-container-high": "#e8e8e8",
+                        "on-surface-variant": "#454652",
+                        "tertiary-fixed": "#ffdad5",
+                        "on-secondary-container": "#00731e",
+                        "surface-container-lowest": "#ffffff",
+                        "inverse-primary": "#bdc2ff",
+                        "primary": "#000666",
+                        "on-primary-container": "#8690ee",
+                        "background": "#f9f9f9"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "stack-md": "16px",
+                        "stack-sm": "8px",
+                        "stack-lg": "24px",
+                        "margin-desktop": "32px",
+                        "unit": "4px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "label-sm": ["Inter"]
+                    },
+                    "fontSize": {
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "headline-lg": ["30px", { "lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "30px", "letterSpacing": "-0.01em", "fontWeight": "700" }],
+                        "label-sm": ["11px", { "lineHeight": "14px", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(198, 197, 212, 0.3);
+        }
+        .text-gradient {
+            background: linear-gradient(135deg, #1a237e 0%, #343d96 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface text-on-surface min-h-screen pb-32">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-margin-mobile py-stack-sm md:px-margin-desktop bg-surface/80 backdrop-blur-xl border-b border-outline-variant/30 shadow-sm transition-all">
+<button class="p-2 rounded-full hover:bg-surface-variant/50 transition-colors text-primary flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">menu</span>
+</button>
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary">Trip Planner</h1>
+<button class="p-2 rounded-full hover:bg-surface-variant/50 transition-colors text-primary flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">account_circle</span>
+</button>
+</header>
+<main class="pt-[80px] px-margin-mobile md:px-margin-desktop max-w-4xl mx-auto space-y-stack-lg pb-safe">
+<!-- AI Insight Box -->
+<div class="glass-panel rounded-xl p-stack-md flex items-start gap-stack-md mt-stack-md shadow-sm border-l-4 border-l-primary-container relative overflow-hidden group hover:shadow-md transition-shadow">
+<div class="absolute -right-4 -top-4 opacity-10 transform rotate-12 group-hover:rotate-45 transition-transform duration-700 pointer-events-none">
+<span class="material-symbols-outlined text-9xl text-primary-container">lightbulb</span>
+</div>
+<div class="bg-primary-container/10 p-2 rounded-full flex-shrink-0 text-primary-container">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+</div>
+<div class="flex-1">
+<h3 class="font-label-md text-label-md text-on-surface-variant mb-unit uppercase tracking-wider">WayFinder Insight</h3>
+<p class="font-body-md text-body-md text-on-surface mb-stack-sm">Reviews suggest <strong class="text-primary-fixed-variant">Nandi Hills</strong> is best visited before 6 AM for the sunrise. Weather looks clear this weekend.</p>
+<button class="font-label-md text-label-md text-primary-container hover:text-primary transition-colors flex items-center gap-1 font-bold">
+                    Plan Sunrise Trip <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Create New Trip CTA -->
+<div class="relative rounded-xl overflow-hidden shadow-lg h-48 flex items-center justify-center group cursor-pointer">
+<div class="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105" data-alt="A sweeping, cinematic landscape view of a misty mountain range in India at sunrise, reminiscent of the Western Ghats or Coorg. The light is golden and soft, filtering through the mist, creating a serene and aspirational mood. The visual style is high-end, realistic travel photography with a slightly warm, premium color grade suitable for a sophisticated travel app. Deep shadows and bright highlights provide excellent contrast." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBBbxs6I4jQTHebrf4zHrkpHDHErUqXc4h8hAMTVWEYRJdQj7T4-B3jMquAsD-I6-3S-g4tSNjUOYmlV0gXOEOFViQ2WMUBUDnenuhKgldNqt6YPd3l-sx8x9t-QWq14wMu6zxsWHS31tfHC8D8esMhKT1BBKsX_gwazIzsyfa9TQj03GGebafhNjtk7j1CshSiTdvtUegE9qUwVidYYU7KDSmZWWUsV7GkMnlt0SKzw6nRNfl7xZBZz3wM87iTVZTX8kTmY7kpUh5q')"></div>
+<div class="absolute inset-0 bg-gradient-to-t from-primary/80 to-primary/20 backdrop-blur-[2px]"></div>
+<div class="relative z-10 flex flex-col items-center text-center p-stack-md">
+<div class="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white mb-stack-sm border border-white/30 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-3xl">add</span>
+</div>
+<h2 class="font-headline-md text-headline-md text-white font-bold mb-unit drop-shadow-md">Create New Trip</h2>
+<p class="font-body-md text-body-md text-white/90 drop-shadow-sm">Start planning your next adventure</p>
+</div>
+</div>
+<!-- Upcoming Trips -->
+<section>
+<div class="flex justify-between items-end mb-stack-md">
+<h2 class="font-headline-md text-headline-md text-on-surface font-bold">Upcoming Trips</h2>
+<button class="font-label-md text-label-md text-primary-fixed-variant hover:text-primary transition-colors">See All</button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-stack-md">
+<!-- Trip Card 1 -->
+<div class="glass-panel rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 group cursor-pointer flex flex-col">
+<div class="h-32 relative">
+<div class="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-105" data-alt="A vibrant, high-quality photograph of the Mysore Palace in India, illuminated against a twilight sky. The architecture is detailed and grand, with warm golden lights contrasting against the cool blue evening sky. The style is modern, sharp, and highly professional, fitting for a premium travel application's destination card." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAeIAL8fx5HQE3Sqvmx_O2Tsn5zB3vhfqINvyM4XHkydE2xqoZ_79PqXyXgnvzXuGiRpxNIsHlpeFiHNmwZMldL26aihdg6_gS73bCXH71mQcx1x4zDXgG-Sts4dthnOCOuug1FFa0JRmgu4HffXeIiBw1AB2a7sIqcKIS2E-RYgiui-QZ9Bx98T2edNIKwHyGPvYHBAJtQR6RqU5BKso9DNnO-N9J2s-N9oySaQ5-6CQjACd0hxNQloPPrkCCJmyRtE28W21HqHeet')"></div>
+<div class="absolute inset-0 bg-gradient-to-b from-black/10 to-black/60"></div>
+<div class="absolute top-stack-sm right-stack-sm bg-surface/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+<span class="font-label-md text-label-md text-on-surface font-bold">92</span>
+</div>
+<div class="absolute bottom-stack-sm left-stack-sm text-white">
+<h3 class="font-headline-md text-headline-md font-bold leading-tight">Mysuru Weekend Getaway</h3>
+<p class="font-label-sm text-label-sm opacity-90">Oct 12 - Oct 14</p>
+</div>
+</div>
+<div class="p-stack-md flex justify-between items-center bg-surface-bright">
+<div class="flex items-center gap-2 text-on-surface-variant">
+<div class="flex bg-surface-container rounded-full px-2 py-1 items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">directions_bus</span>
+</div>
+<span class="material-symbols-outlined text-[14px] text-outline-variant">chevron_right</span>
+<div class="flex bg-surface-container rounded-full px-2 py-1 items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">train</span>
+</div>
+</div>
+<button class="w-8 h-8 rounded-full bg-primary-container/10 text-primary-container flex items-center justify-center hover:bg-primary-container hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Trip Card 2 -->
+<div class="glass-panel rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 group cursor-pointer flex flex-col">
+<div class="h-32 relative">
+<div class="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-105" data-alt="A lush, green landscape photography shot of the ancient ruins of Hampi, India, nestled among massive boulders. The scene is bathed in bright, clear daytime light, showcasing the historical architecture and natural beauty. The image is crisp, realistic, and curated to evoke a sense of exploration and history within a modern, clean UI context." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDZNTkfy53LfUjAXMNT4g100qGzS5FQVumo_2nsaLXlWDIQYK5lodbaejZBvumqIMOHz0MSysKgoCqA-nzYKhMeNL1KHlg3oU0aZY6WDGS4NRnxQ-O_XRunoWeFdG-whjahz-DrsiNrqPAvKnUg8PKBIHYXJXcLv0XwzbhbaHccv925U93jxWAwOxIbFYEB26MFmNeB_tSYfP3ydbQ6ACkQlDZ0mrwjgbYtVN0en5LrI8cz8Ek2fuK7K5_Kzqvbo56KqfnRsyg0ecHt')"></div>
+<div class="absolute inset-0 bg-gradient-to-b from-black/10 to-black/60"></div>
+<div class="absolute top-stack-sm right-stack-sm bg-surface/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
+<div class="w-2 h-2 rounded-full bg-secondary-container"></div>
+<span class="font-label-md text-label-md text-on-surface font-bold">85</span>
+</div>
+<div class="absolute bottom-stack-sm left-stack-sm text-white">
+<h3 class="font-headline-md text-headline-md font-bold leading-tight">Hampi Heritage Trail</h3>
+<p class="font-label-sm text-label-sm opacity-90">Nov 02 - Nov 05</p>
+</div>
+</div>
+<div class="p-stack-md flex justify-between items-center bg-surface-bright">
+<div class="flex items-center gap-2 text-on-surface-variant">
+<div class="flex bg-surface-container rounded-full px-2 py-1 items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">train</span>
+</div>
+<span class="material-symbols-outlined text-[14px] text-outline-variant">chevron_right</span>
+<div class="flex bg-surface-container rounded-full px-2 py-1 items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">directions_walk</span>
+</div>
+</div>
+<button class="w-8 h-8 rounded-full bg-primary-container/10 text-primary-container flex items-center justify-center hover:bg-primary-container hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Drafts Section -->
+<section>
+<h2 class="font-headline-md text-headline-md text-on-surface font-bold mb-stack-md">Drafts</h2>
+<div class="space-y-stack-sm">
+<div class="glass-panel rounded-xl p-stack-md flex items-center justify-between hover:bg-surface-container-low transition-colors cursor-pointer border border-outline-variant/20 border-dashed">
+<div class="flex items-center gap-stack-md">
+<div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined">edit_note</span>
+</div>
+<div>
+<h4 class="font-body-lg text-body-lg text-on-surface font-medium">Coorg Coffee Estate Tour</h4>
+<p class="font-label-sm text-label-sm text-on-surface-variant mt-1">Last edited 2 days ago</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline-variant">chevron_right</span>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 right-0 z-50 flex justify-center pb-safe">
+<div class="floating pill-shaped rounded-full mx-auto mb-6 w-[90%] max-w-md bg-surface/80 dark:bg-inverse-surface/80 backdrop-blur-xl border border-outline-variant/20 shadow-[0_8px_30px_rgb(0,6,102,0.15)] flex justify-between px-2 py-2">
+<button class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-2 hover:text-primary dark:hover:text-primary-fixed-dim transition-all flex-1">
+<span class="material-symbols-outlined mb-1" style="font-variation-settings: 'FILL' 0;">search</span>
+<span class="font-label-sm text-label-sm">Search</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-2 hover:text-primary dark:hover:text-primary-fixed-dim transition-all flex-1">
+<span class="material-symbols-outlined mb-1" style="font-variation-settings: 'FILL' 0;">directions_transit</span>
+<span class="font-label-sm text-label-sm">A-to-B</span>
+</button>
+<button class="flex flex-col items-center justify-center bg-primary dark:bg-primary-container text-on-primary dark:text-on-primary-container rounded-full px-6 py-2 scale-90 duration-200 ease-in-out flex-1">
+<span class="material-symbols-outlined mb-1" style="font-variation-settings: 'FILL' 1;">map</span>
+<span class="font-label-sm text-label-sm font-bold">Trip</span>
+</button>
+</div>
+</nav>
+</body></html>

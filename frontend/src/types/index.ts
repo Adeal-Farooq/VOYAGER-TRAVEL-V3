@@ -14,6 +14,7 @@ export interface PlaceResult {
   hotel_prices?: HotelPriceInfo
   reviews?: PlaceReview[]
   review_source?: string
+  concerns?: string
 }
 
 export interface HotelPriceInfo {
@@ -56,6 +57,7 @@ export interface RouteLeg {
   from_lng?: number
   to_lat?: number
   to_lng?: number
+  path?: number[][]
 }
 
 export interface RouteOption {
@@ -121,72 +123,6 @@ export interface EnrichSingleResponse {
   place: PlaceResult
 }
 
-export interface UserPreferences {
-  budget?: number
-  groupSize: number
-  priority: 'cost' | 'time' | 'comfort' | 'balanced'
-}
-
-export interface MiniPathTransitOption {
-  mode: string
-  from: string
-  to: string
-  distance_km: number
-  duration_minutes: number
-  fare: number
-  per_person?: number
-  label?: string
-  icon?: string
-  group_capacity?: number
-  path?: number[][]
-  stop?: any
-  station?: any
-  instructions?: string
-  from_lat?: number
-  from_lng?: number
-  to_lat?: number
-  to_lng?: number
-  stop_name?: string
-  stop_lat?: number
-  stop_lng?: number
-  station_name?: string
-  station_lat?: number
-  station_lng?: number
-}
-
-export interface MiniPathOptions {
-  source_walk_options: MiniPathTransitOption[]
-  direct_ride_options?: MiniPathTransitOption[]
-  source_to_transit: {
-    bus: MiniPathTransitOption[]
-    metro: MiniPathTransitOption[]
-  }
-  transit_ride_options?: {
-    bus: MiniPathTransitOption[]
-    metro: MiniPathTransitOption[]
-  }
-  transit_to_dest: {
-    bus: MiniPathTransitOption[]
-    metro: MiniPathTransitOption[]
-  }
-  direct_distance_km: number
-}
-
-export interface MiniPathSegment {
-  from: string
-  to: string
-  selectedOption: MiniPathTransitOption | null
-  availableOptions: MiniPathTransitOption[]
-  segmentIndex: number
-}
-
-export interface BuiltRoute {
-  segments: MiniPathSegment[]
-  totalFare: number
-  totalDuration: number
-  totalDistance: number
-}
-
 export interface SegmentStepOption {
   mode: string
   label?: string
@@ -211,6 +147,7 @@ export interface SegmentStopInfo {
   lat: number
   lng: number
   type: string
+  distance_km?: number
 }
 
 export interface SegmentStepData {
@@ -222,34 +159,64 @@ export interface SegmentStepData {
     reach_options: SegmentStepOption[]
     from_stop_options: SegmentStepOption[]
   }[]
+  route_paths?: RoutePath[]
 }
 
-export interface CompleteJourneyDestOption {
-  to: SegmentStopInfo
-  transport_options: SegmentStepOption[]
-  next: CompleteJourneySegmentNode | null
-  from_stops: { to: SegmentStopInfo; transport_options: SegmentStepOption[] }[]
+// New flat multi-segment types
+export interface AllSegmentsResponse {
+  status: string
+  data: {
+    source: { lat: number; lng: number; name: string }
+    dest: { lat: number; lng: number; name: string }
+    segments: AllSegment[]
+    total_segments: number
+  }
 }
 
-export interface CompleteJourneySegmentNode {
-  from: { name: string; lat: number; lng: number }
-  destinations: CompleteJourneyDestOption[]
-  direct_options: SegmentStepOption[]
+export interface RoutePathLeg {
+  from: string; to: string; mode: string; route_number: string
+  distance_km: number; duration_minutes: number; fare: number
+  departure_times?: string[]; shape_path?: number[][]
 }
 
-export interface CompleteJourneySegment {
+export interface RoutePath {
+  legs: RoutePathLeg[]
+  total_fare: number
+  total_duration_minutes: number
+  total_distance_km: number
+  total_walking_km: number
+  transfers: number
+}
+
+export interface AllSegment {
   segment_index: number
+  type: string
   from: { name: string; lat: number; lng: number }
-  destinations: CompleteJourneyDestOption[]
   direct_options: SegmentStepOption[]
-  parent_via_index?: number | null
+  destinations: SegmentDestination[]
+  route_paths?: RoutePath[]
 }
 
-export interface CompleteJourneyResponse {
-  from: { lat: number; lng: number; name: string }
-  dest: { lat: number; lng: number; name: string }
-  segments: CompleteJourneySegment[]
-  direct_options: SegmentStepOption[]
+export interface SegmentDestination {
+  stop: SegmentStopInfo
+  distance_from_current: number
+  reach_options: SegmentStepOption[]
+  transit_options: TransitOption[]
+  all_buses?: Record<string, string[]>
+}
+
+export interface TransitOption extends SegmentStepOption {
+  route_number?: string
+  bus_times?: { departure_time: string; route: string }[]
+  transit_type?: string
+  departure_time?: string
+  arrival_time?: string
+  final_options: SegmentStepOption[]
+  next_transit?: TransitOption[]
+  next_segment_index?: number
+  needs_next_segment?: boolean
+  dropoff_walk_min?: number
+  dropoff_to_dest_km?: number
 }
 
 export interface NewsItem {
@@ -269,4 +236,10 @@ export interface MapRouteGeometry {
   weight?: number
   dashArray?: string
   label?: string
+}
+
+export interface NavTab {
+  key: AppMode
+  label: string
+  icon: string
 }

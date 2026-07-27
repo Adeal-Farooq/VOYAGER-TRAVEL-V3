@@ -28,3 +28,8 @@ n8n-instance/dist/
 Thumbs.db
 
 .env
+.env.example
+node_modules/
+n8n-instance/
+osrm-data/
+osrm-data-foot/

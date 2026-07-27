@@ -23,16 +23,23 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str = ""
 
-    N8N_WEBHOOK_URL: str = ""
-
     BANGALORE_CENTER_LAT: float = 12.9716
     BANGALORE_CENTER_LNG: float = 77.5946
     BANGALORE_DEFAULT_ZOOM: int = 12
 
-    OSRM_BASE_URL: str = "https://router.project-osrm.org"
+    OSRM_BASE_URL: str = "http://localhost:5000"
+    OSRM_FOOT_URL: str = "http://localhost:5001"
 
     FUEL_PRICE_PER_LITER: float = 110.0
     PETROL_AVG_MILEAGE: float = 15.0
+
+    # Scraping & API Keys
+    DATAIMPULSE_USER: str = ""
+    DATAIMPULSE_PASS: str = ""
+    DATAIMPULSE_HOST: str = ""
+    SERPAPI_API_KEY: str = ""
+    GOOGLE_MAPS_API_KEY: str = ""
+    GOOGLE_CX: str = ""
 
     class Config:
         env_file = ".env"
@@ -45,5 +52,5 @@ if isinstance(settings.OPENROUTER_FALLBACK_MODELS, str):
     import json
     try:
         settings.OPENROUTER_FALLBACK_MODELS = json.loads(settings.OPENROUTER_FALLBACK_MODELS)
-    except:
+    except (json.JSONDecodeError, TypeError):
         settings.OPENROUTER_FALLBACK_MODELS = [settings.OPENROUTER_FALLBACK_MODELS]
