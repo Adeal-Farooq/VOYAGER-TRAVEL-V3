@@ -1,8 +1,22 @@
-import json
+import json, logging
 import csv
 import os
 import math
+import re as _re
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+_ROUTE_NUM_PATTERN = _re.compile(r'^(?=.*\d)[\dA-Z]+(-[A-Z0-9]+)?$')
+def _clean_route_key(key: str) -> str:
+    parts = key.strip().upper().split(None, 1)
+    if len(parts) >= 2:
+        first = parts[0].rstrip('-.,')
+        if _ROUTE_NUM_PATTERN.match(first):
+            return first
+    return key.strip().upper()
+
+
 from backend.core.config import settings
 from backend.core.spatial_index import SpatialIndex
 
@@ -110,7 +124,7 @@ class TransitDatabase:
                 name = str(row.get("Stop Name", ""))
                 lat = float(row.get("Latitude", 0))
                 lng = float(row.get("Longitude", 0))
-                if lat == 0 and lng == 0 or not name:
+                if lat == 0 and lng == 0 or not name or name.lower() in ('nan', 'none', 'null'):
                     continue
                 routes_raw = row.get("Routes with num trips", "{}")
                 routes_list = []
@@ -118,12 +132,13 @@ class TransitDatabase:
                     try:
                         import ast
                         routes_dict = ast.literal_eval(routes_raw)
-                        routes_list = list(routes_dict.keys())
-                    except:
+                        routes_list = [_clean_route_key(k) for k in routes_dict.keys()]
+                    except Exception as e:
+                        logger.debug(f"ast parse failed for routes_raw: {e}")
                         try:
-                            routes_list = list(json.loads(routes_raw.replace("'", "\"").replace("None", "null")).keys())
-                        except:
-                            pass
+                            routes_list = [_clean_route_key(k) for k in json.loads(routes_raw.replace("'", "\"").replace("None", "null")).keys()]
+                        except Exception as e2:
+                            logger.debug(f"json parse also failed: {e2}")
                 self.bus_stops[stop_id] = {
                     "stop_id": stop_id,
                     "name": name,

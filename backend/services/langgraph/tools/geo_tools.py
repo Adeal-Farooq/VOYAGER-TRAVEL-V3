@@ -1,6 +1,9 @@
 """Geocoding and spatial tools for LangGraph agents."""
 
+import logging
 from backend.services.clients.google_maps_client import google_maps_client
+
+logger = logging.getLogger(__name__)
 from backend.core.database import db
 
 
@@ -90,6 +93,6 @@ async def get_address_from_coords(lat: float, lng: float) -> str:
                     data = resp.json()
                     if data.get("results"):
                         return data["results"][0].get("formatted_address", "")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Reverse geocode failed for {lat},{lng}: {e}")
     return f"{lat:.4f}, {lng:.4f}"

@@ -7,6 +7,8 @@ from geopy.distance import geodesic
 from backend.core.database import db
 from backend.agents.llm_agent import llm_agent
 from backend.services.images import image_service
+import logging
+logger = logging.getLogger(__name__)
 
 
 OSM_HEADERS = {"User-Agent": "VOYAGER-App/1.0 (India Transit Navigator)"}
@@ -82,7 +84,7 @@ class GeocodingService:
                 if key not in seen_coords:
                     seen_coords.add(key)
                     results.append(self._make_result(name, stop["lat"], stop["lng"], "bus_stop",
-                        f"BMTC bus stop", 0.9, 4.0))
+                        "", 0.9, 4.0))
 
         for station in db.metro_stations:
             if not isinstance(station, dict): continue
@@ -92,7 +94,7 @@ class GeocodingService:
                 if key not in seen_coords:
                     seen_coords.add(key)
                     results.append(self._make_result(name, station["lat"], station["lng"], "metro_station",
-                        f"Namma Metro {station.get('line','')}", 0.95, 4.3))
+                        "", 0.95, 4.3))
 
         # Merge AI results (these fill gaps for places not in OSM/database)
         for r in ai_results:
@@ -134,11 +136,12 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                 if not isinstance(r, dict): continue
                 r["reliability_score"] = r.get("reliability_score", round(min(r.get("rating", 4.0) / 5, 0.95), 2))
                 r["is_recommended"] = r.get("is_recommended", r.get("reliability_score", 0.5) > 0.6)
-                r["review_summary"] = r.get("review_summary", f"{r.get('name', query)} in Bengaluru")
+                r["review_summary"] = r.get("review_summary", "")
                 r["address"] = r.get("address", f"{r.get('name', query)}, Bengaluru")
 
             return [r for r in (results or []) if isinstance(r, dict) and "lat" in r and "lng" in r]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"AI search failed for '{query}': {e}")
             return []
 
     async def _osm_search(self, query: str, lat: float = None, lng: float = None) -> list[dict]:
@@ -158,11 +161,11 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                         ptype = self._osm_class_to_type(item.get("type", ""), item.get("category", ""))
                         city = self._extract_city(item.get("address", {}), item.get("display_name", ""))
                         results.append(self._make_result(name, lat_f, lng_f, ptype,
-                            f"{ptype.replace('_',' ').title()} in {city}", 0.8, 4.0,
+                            "", 0.8, 4.0,
                             item.get("display_name", "")))
                     return results
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"OSM search failed for '{query}': {e}")
         return []
 
     def _extract_city(self, address: dict, display_name: str) -> str:
@@ -202,7 +205,7 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                     if key not in seen_coords:
                         seen_coords.add(key)
                         results.append(self._make_result(stop["name"], stop["lat"], stop["lng"], "bus_stop",
-                            f"BMTC bus stop", 0.9, 4.0, distance_km=stop["distance_km"]))
+                            "", 0.9, 4.0, distance_km=stop["distance_km"]))
 
             if not place_type or place_type == "metro_station":
                 for station in db.find_nearby_metro_stations(lat, lng, radius_km):
@@ -210,7 +213,7 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                     if key not in seen_coords:
                         seen_coords.add(key)
                         results.append(self._make_result(station["name"], station["lat"], station["lng"], "metro_station",
-                            f"Namma Metro {station.get('line','')}", 0.95, 4.3, distance_km=station["distance_km"]))
+                            "", 0.95, 4.3, distance_km=station["distance_km"]))
 
         if not results:
             try:
@@ -221,8 +224,8 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                         seen_coords.add(key)
                         r["distance_km"] = round(geodesic((lat, lng), (r["lat"], r["lng"])).km, 2)
                         results.append(r)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"AI nearby fallback failed for {place_type} at {lat},{lng}: {e}")
 
         # Sanitize all float values before returning
         for r in results:
@@ -293,10 +296,9 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                                 el_lat = el.get("lat") or (el.get("center", {}) or {}).get("lat", lat)
                                 el_lng = el.get("lon") or (el.get("center", {}) or {}).get("lon", lng)
                                 ptype = self._osm_tag_to_type(el.get("tags", {}))
-                                review = f"{ptype.replace('_',' ').title()} near your location"
-                                results.append(self._make_result(name, float(el_lat), float(el_lng), ptype, review, 0.75, 4.0))
-                    except:
-                        pass
+                                results.append(self._make_result(name, float(el_lat), float(el_lng), ptype, "", 0.75, 4.0))
+                    except Exception as e:
+                        logger.warning(f"OSM nearby typed query failed: {e}")
                 else:
                     all_tags = list(tag_map.values())
                     for i in range(0, len(all_tags), 5):
@@ -321,14 +323,14 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                                     el_lat = el.get("lat") or (el.get("center", {}) or {}).get("lat", lat)
                                     el_lng = el.get("lon") or (el.get("center", {}) or {}).get("lon", lng)
                                     ptype = self._osm_tag_to_type(el.get("tags", {}))
-                                    review = f"{ptype.replace('_',' ').title()} near your location"
-                                    results.append(self._make_result(name, float(el_lat), float(el_lng), ptype, review, 0.75, 4.0))
-                        except:
+                                    results.append(self._make_result(name, float(el_lat), float(el_lng), ptype, "", 0.75, 4.0))
+                        except Exception as e:
+                            logger.warning(f"OSM nearby batch query failed: {e}")
                             continue
 
             return results
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"OSM nearby failed for {lat},{lng} type={place_type}: {e}")
         return []
 
     def _extract_osm_name(self, tags: dict) -> str:
@@ -348,18 +350,7 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
 
                 async def enrich_place(r: dict):
                     async with sem:
-                        try:
-                            if r.get("place_type") not in ("bus_stop", "metro_station"):
-                                r["image_url"] = await image_service.get_place_image(r["name"], r.get("place_type"))
-                            if r.get("place_type") in ("hotel", "lodge") and not r.get("price_info"):
-                                hp = await llm_agent.get_hotel_prices(r["name"])
-                                if hp and hp.get("avg_price", 0) > 0:
-                                    r["price_info"] = f"₹{hp.get('avg_price', 0)}/night (₹{hp.get('min_price',0)}-₹{hp.get('max_price',0)})"
-                                    r["hotel_prices"] = hp
-                        except Exception:
-                            pass
-
-                        # Real reviews via LangChain
+                        # Real reviews via LangChain (includes SerpAPI photos)
                         try:
                             web_reviews = await llm_agent.get_real_reviews(r["name"], r.get("address"))
                             if web_reviews:
@@ -368,52 +359,47 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
                                 if web_reviews.get("review_summary"): r["review_summary"] = web_reviews["review_summary"]
                                 if web_reviews.get("is_recommended") is not None: r["is_recommended"] = bool(web_reviews["is_recommended"])
                                 if web_reviews.get("reviews"): r["reviews"] = web_reviews.get("reviews", [])[:4]
+                                photos = web_reviews.get("photos", [])
+                                if photos and photos[0]:
+                                    r["image_url"] = photos[0]
                                 r["review_source"] = "web"
-                                return
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Web reviews failed for {r.get('name')}: {e}")
 
-                        # Final fallback: LLM generated
+                        # Image fallback if SerpAPI had no photos
+                        if not r.get("image_url"):
+                            try:
+                                if r.get("place_type") not in ("bus_stop", "metro_station"):
+                                    r["image_url"] = await image_service.get_place_image(r["name"], r.get("place_type"))
+                            except Exception as e:
+                                logger.warning(f"Image fallback failed for {r.get('name')}: {e}")
+
+                        # Hotel prices
                         try:
-                            prompt = f"""For {r['name']} in Bengaluru, provide realistic data.
-Return a JSON object with: rating (1.0-5.0), reliability_score (0.0-1.0),
-review_summary (brief 10-20 word summary), is_recommended (bool),
-reviews (array of 2-4 objects with: user (DIFFERENT names from: Priya Sharma, Arun Kumar, Sneha Patel, Ravi Desai, Lakshmi Nair, Vikram Singh, Anjali Gupta, Rajesh Iyer, Deepa Menon, Suresh Reddy, Meera Joshi), rating (1-5 int, vary them), text (unique specific detailed review about experience), date ("2 weeks ago", "last month", "3 days ago", "yesterday", "a month ago")).
-CRITICAL: Each review must have a DIFFERENT name, rating, and text."""
-                            text = await llm_agent._call_llm(
-                                "You are a review analyst for Bengaluru places. Return ONLY valid JSON.",
-                                prompt, json_mode=True
-                            )
-                            content = text.strip() if isinstance(text, str) else str(text) if text else "{}"
-                            if content.startswith("```"): content = content.strip("`").strip()
-                            if content.startswith("json"): content = content[4:].strip()
-                            data = json.loads(content) if isinstance(content, str) else content
-                            if isinstance(data, dict):
-                                if data.get("rating"): r["rating"] = float(data["rating"])
-                                if data.get("reliability_score"): r["reliability_score"] = float(data["reliability_score"])
-                                if data.get("review_summary"): r["review_summary"] = data["review_summary"]
-                                if data.get("is_recommended") is not None: r["is_recommended"] = bool(data["is_recommended"])
-                                if data.get("reviews"): r["reviews"] = data.get("reviews", [])[:4]
-                                r["review_source"] = "llm"
-                        except Exception:
-                            pass
+                            if r.get("place_type") in ("hotel", "lodge") and not r.get("price_info"):
+                                hp = await llm_agent.get_hotel_prices(r["name"])
+                                if hp and hp.get("avg_price", 0) > 0:
+                                    r["price_info"] = f"₹{hp.get('avg_price', 0)}/night (₹{hp.get('min_price',0)}-₹{hp.get('max_price',0)})"
+                                    r["hotel_prices"] = hp
+                        except Exception as e:
+                            logger.warning(f"Prices failed for {r.get('name')}: {e}")
 
                 tasks = [enrich_place(r) for r in results[:8]]
                 await asyncio.gather(*tasks)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Enrich results gather failed: {e}")
 
         for r in results:
             r.setdefault("rating", 4.0)
             r.setdefault("reliability_score", 0.75)
-            r.setdefault("review_summary", f"{r['name']} in Bengaluru")
+            r.setdefault("review_summary", "")
             r.setdefault("is_recommended", r.get("reliability_score", 0.75) > 0.6)
             r.setdefault("address", f"{r['name']}, Bengaluru")
 
         return results
 
     async def enrich_single_place(self, name: str, lat: float, lng: float, place_type: str, address: str) -> dict:
-        result = self._make_result(name, lat, lng, place_type, address, 0.8, 4.0)
+        result = self._make_result(name, lat, lng, place_type, "", 0.8, 4.0)
         result["address"] = address or f"{name}, Bengaluru"
 
         # Real reviews via LangChain
@@ -425,48 +411,29 @@ CRITICAL: Each review must have a DIFFERENT name, rating, and text."""
                 if web_reviews.get("review_summary"): result["review_summary"] = web_reviews["review_summary"]
                 if web_reviews.get("is_recommended") is not None: result["is_recommended"] = bool(web_reviews["is_recommended"])
                 if web_reviews.get("reviews"): result["reviews"] = web_reviews.get("reviews", [])[:4]
+                photos = web_reviews.get("photos", [])
+                if photos and photos[0]:
+                    result["image_url"] = photos[0]
                 result["review_source"] = "web"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Enrich single place reviews failed for {name}: {e}")
 
-        # Fallback to LLM if no real reviews
-        if not result.get("reviews"):
+        # Fallback: try image service if no photo from SerpAPI
+        if not result.get("image_url"):
             try:
-                prompt = f"""For {name} in Bengaluru, provide realistic data.
-Return a JSON object with: rating (1.0-5.0), reliability_score (0.0-1.0),
-review_summary (brief 10-20 word summary), is_recommended (bool),
-price_info (string if hotel/lodge else null, e.g. "₹2500/night"),
-reviews (array of 3-4 objects with: user (pick DIFFERENT names from: Priya Sharma, Arun Kumar, Sneha Patel, Ravi Desai, Lakshmi Nair, Vikram Singh, Anjali Gupta, Rajesh Iyer, Deepa Menon, Suresh Reddy, Meera Joshi, Sanjay Pillai, Kavita Rao, Manoj Verma, Pooja Malhotra), rating (1-5 int, vary them), text (unique specific detailed review about experience), date ("2 weeks ago", "last month", "3 days ago", "yesterday", "a month ago")).
-CRITICAL: Each review must have a DIFFERENT name, rating, and text."""
-                text = await llm_agent._call_llm(
-                    "You are a review analyst for Bengaluru places. Return ONLY valid JSON.",
-                    prompt, json_mode=True
-                )
-                content = text.strip() if isinstance(text, str) else str(text) if text else "{}"
-                if content.startswith("```"): content = content.strip("`").strip()
-                if content.startswith("json"): content = content[4:].strip()
-                data = json.loads(content) if isinstance(content, str) else content
-                if isinstance(data, dict):
-                    if data.get("rating"): result["rating"] = float(data["rating"])
-                    if data.get("reliability_score"): result["reliability_score"] = float(data["reliability_score"])
-                    if data.get("review_summary"): result["review_summary"] = data["review_summary"]
-                    if data.get("is_recommended") is not None: result["is_recommended"] = bool(data["is_recommended"])
-                    if data.get("price_info"): result["price_info"] = data["price_info"]
-                    if data.get("reviews"): result["reviews"] = data.get("reviews", [])[:4]
-                    result["review_source"] = "llm"
-            except Exception:
-                pass
+                if place_type not in ("bus_stop", "metro_station"):
+                    result["image_url"] = await image_service.get_place_image(name, place_type)
+            except Exception as e:
+                logger.warning(f"Image fetch fallback failed for {name}: {e}")
 
         try:
-            if place_type not in ("bus_stop", "metro_station"):
-                result["image_url"] = await image_service.get_place_image(name, place_type)
             if place_type in ("hotel", "lodge") and not result.get("price_info"):
                 hp = await llm_agent.get_hotel_prices(name)
                 if hp and hp.get("avg_price", 0) > 0:
                     result["price_info"] = f"₹{hp.get('avg_price', 0)}/night (₹{hp.get('min_price',0)}-₹{hp.get('max_price',0)})"
                     result["hotel_prices"] = hp
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Enrich single place prices failed for {name}: {e}")
         return result
 
     async def get_suggestions(self, partial: str) -> list[str]:
@@ -486,7 +453,8 @@ CRITICAL: Each review must have a DIFFERENT name, rating, and text."""
             for s in (arr or []):
                 if isinstance(s, str):
                     suggestions.add(s)
-        except: pass
+        except Exception as e:
+            logger.warning(f"AI suggestions failed for '{partial}': {e}")
 
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -498,7 +466,8 @@ CRITICAL: Each review must have a DIFFERENT name, rating, and text."""
                     for item in resp.json()[:4]:
                         name = item.get("display_name", "").split(",")[0]
                         if name: suggestions.add(name)
-        except: pass
+        except Exception as e:
+            logger.warning(f"OSM suggestions failed for '{partial}': {e}")
 
         q = partial.lower()
         for stop in db.bus_stops.values():

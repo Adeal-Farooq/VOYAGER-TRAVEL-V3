@@ -55,6 +55,11 @@ interface AppState {
 
   startJourney: () => void
   stopJourney: () => void
+
+  darkMode: boolean
+  toggleDarkMode: () => void
+  weather: { condition?: string; temp?: number; humidity?: number } | null
+  setWeather: (w: { condition?: string; temp?: number; humidity?: number } | null) => void
 }
 
 const AppContext = createContext<AppState | null>(null)
@@ -89,6 +94,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [groupSize, setGroupSize] = useState(1)
   const [budget, setBudget] = useState<number | undefined>(undefined)
   const [travelMode, setTravelMode] = useState<'public' | 'personal' | 'walking'>('public')
+  const [darkMode, setDarkMode] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const toggleDarkMode = useCallback(() => setDarkMode(p => !p), [])
+  const [weather, setWeather] = useState<{ condition?: string; temp?: number; humidity?: number } | null>(null)
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+  }, [darkMode])
 
   const tabs: NavTab[] = [
     { key: 'search', label: 'Search', icon: 'search' },
@@ -160,6 +172,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ridePrices, setRidePrices,
       groupSize, setGroupSize, budget, setBudget, travelMode, setTravelMode,
       startJourney, stopJourney,
+      darkMode, toggleDarkMode, weather, setWeather,
     }}>
       {children}
     </AppContext.Provider>

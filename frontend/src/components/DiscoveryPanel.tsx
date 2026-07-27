@@ -1,16 +1,16 @@
 import { useState } from 'react'
 import type { PlaceResult } from '../types'
-import { getScoreLabel } from '../utils/helpers'
+import { getScoreLabel, getScoreColor } from '../utils/helpers'
 
 interface DiscoveryPanelProps {
   place: PlaceResult
   onClose: () => void
+  onNavigate?: (place: PlaceResult) => void
+  onShowOnMap?: (place: PlaceResult) => void
 }
 
-export default function DiscoveryPanel({ place, onClose }: DiscoveryPanelProps) {
+export default function DiscoveryPanel({ place, onClose, onNavigate, onShowOnMap }: DiscoveryPanelProps) {
   const score = place.reliability_score || 0.5
-  const isGood = score >= 0.7
-  const isMid = score >= 0.4 && score < 0.7
   const reviews = place.reviews?.slice(0, 5) || []
   const [imgError, setImgError] = useState(false)
 
@@ -21,7 +21,7 @@ export default function DiscoveryPanel({ place, onClose }: DiscoveryPanelProps) 
       display: 'flex', flexDirection: 'column',
     }}>
       <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(198,197,212,0.2)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 18, color: isGood ? '#16a34a' : isMid ? '#ca8a04' : '#dc2626' }}>discover</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: getScoreColor(score * 100) }}>discover</span>
         <span className="text-headline-sm" style={{ flex: 1 }}>Discovery Results</span>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, borderRadius: '50%' }}>
           <span className="material-symbols-outlined" style={{ fontSize: 20 }}>close</span>
@@ -40,8 +40,8 @@ export default function DiscoveryPanel({ place, onClose }: DiscoveryPanelProps) 
         <div style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <span className="text-headline-md">{place.name}</span>
-            <span className={`reliability-pill ${isGood ? 'good' : isMid ? 'mid' : 'bad'}`} style={{ fontSize: 12, padding: '3px 12px' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 14, marginRight: 2 }}>{isGood ? 'verified' : 'warning'}</span>
+            <span className="reliability-pill" style={{ fontSize: 12, padding: '3px 12px', background: getScoreColor(score * 100), color: 'white' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 14, marginRight: 2 }}>{score >= 0.6 ? 'verified' : 'warning'}</span>
               {(score * 100).toFixed(0)}%
             </span>
           </div>
@@ -65,8 +65,8 @@ export default function DiscoveryPanel({ place, onClose }: DiscoveryPanelProps) 
               <span className="text-body-sm" style={{ color: 'var(--text-muted)' }}>rating</span>
             </div>
           )}
-          <div className={`reliability-pill ${isGood ? 'good' : isMid ? 'mid' : 'bad'}`}>
-            {getScoreLabel(score)}
+          <div className="reliability-pill" style={{ background: getScoreColor(score * 100), color: 'white' }}>
+            {getScoreLabel(score * 100)}
           </div>
           {place.distance_km !== undefined && (
             <div className="text-body-md" style={{ color: 'var(--text-muted)' }}>
@@ -93,8 +93,8 @@ export default function DiscoveryPanel({ place, onClose }: DiscoveryPanelProps) 
 
         <div style={{
           padding: '10px 14px', borderRadius: 'var(--radius-md)', marginBottom: 12,
-          background: isGood ? 'var(--secondary-container)' : isMid ? '#fffbeb' : 'var(--error-container)',
-          borderLeft: `3px solid ${isGood ? 'var(--secondary)' : isMid ? '#eab308' : 'var(--error)'}`,
+          background: getScoreColor(score * 100) === '#22c55e' ? 'var(--secondary-container)' : getScoreColor(score * 100) === '#eab308' ? '#fffbeb' : 'var(--error-container)',
+          borderLeft: `3px solid ${getScoreColor(score * 100)}`,
         }}>
           <div className="text-body-sm" style={{ fontWeight: 600, marginBottom: 2 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }}>auto_awesome</span>
@@ -117,27 +117,24 @@ export default function DiscoveryPanel({ place, onClose }: DiscoveryPanelProps) 
                 background: 'var(--surface-container-low)',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                  <span style={{ fontWeight: 500, fontSize: 12 }}>{rv.user}</span>
+                  <span style={{ fontWeight: 500, fontSize: 12 }}>{rv.author || rv.user}</span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                     {'⭐'.repeat(Math.min(rv.rating || 3, 5))} {rv.date}
                   </span>
                 </div>
-                <div style={{ fontSize: 12, fontStyle: 'italic', color: '#555' }}>"{rv.text}"</div>
+                <div style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--text-muted)' }}>"{rv.text}"</div>
               </div>
             ))}
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-          <button onClick={() => window.open(`https://www.google.com/maps/search/${encodeURIComponent(place.name)}`, '_blank')}
-            style={{ flex: 1, padding: '10px', border: '1px solid var(--outline-variant)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.8)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+          <button onClick={() => onShowOnMap?.(place)}
+            style={{ flex: 1, padding: '10px', border: '1px solid var(--outline-variant)', borderRadius: 'var(--radius-md)', background: 'var(--surface-container)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>map</span>
-            View on Maps
+            Show on Map
           </button>
-          <button onClick={() => {
-            const evt = new CustomEvent('navigate-to-place', { detail: place })
-            window.dispatchEvent(evt)
-          }}
+          <button onClick={() => onNavigate?.(place)}
             style={{ flex: 1, padding: '10px', border: 'none', borderRadius: 'var(--radius-md)', background: 'var(--primary)', color: 'var(--on-primary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>directions_transit</span>
             Navigate Here

@@ -1,6 +1,9 @@
+import logging
 import random
 import httpx
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class ProxyManager:
     """Manages rotating proxies for web scraping.
@@ -66,7 +69,8 @@ class ProxyManager:
                             parts = line.strip().split(":")
                             if len(parts) == 2:
                                 self._free_proxies.append({"ip": parts[0], "port": parts[1]})
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Proxy fetch failed for {url}: {e}")
                 continue
 
         self._last_fetch = time.time()

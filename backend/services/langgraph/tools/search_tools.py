@@ -1,6 +1,9 @@
 """Search tools for LangGraph agents."""
 
+import logging
 from backend.services.clients.serpapi_client import serpapi_client
+
+logger = logging.getLogger(__name__)
 from backend.services.clients.reddit_client import reddit_client
 from backend.services.scrapers.ddg_scraper import ddg_scraper
 
@@ -80,8 +83,8 @@ async def get_suggestions(query: str, lat: float = None, lng: float = None, limi
                         name = r.get("title", "")
                         if name and len(name) > 3:
                             suggestions.add(name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"SerpAPI suggestions failed for '{query}': {e}")
 
     # Fallback: Reddit suggestions
     if len(suggestions) < limit:

@@ -52,5 +52,5 @@ if isinstance(settings.OPENROUTER_FALLBACK_MODELS, str):
     import json
     try:
         settings.OPENROUTER_FALLBACK_MODELS = json.loads(settings.OPENROUTER_FALLBACK_MODELS)
-    except:
+    except (json.JSONDecodeError, TypeError):
         settings.OPENROUTER_FALLBACK_MODELS = [settings.OPENROUTER_FALLBACK_MODELS]

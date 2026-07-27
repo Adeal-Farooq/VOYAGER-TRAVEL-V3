@@ -3,6 +3,16 @@ import csv, io, zipfile, os, math, pickle, re
 from difflib import SequenceMatcher
 from backend.core.config import settings
 
+_ROUTE_NUM_PATTERN = re.compile(r'^(?=.*\d)[\dA-Z]+(-[A-Z0-9]+)?$')
+
+def clean_route_short_name(short_name: str) -> str:
+    parts = short_name.strip().upper().split(None, 1)
+    if len(parts) >= 2:
+        first = parts[0].rstrip('-.,')
+        if _ROUTE_NUM_PATTERN.match(first):
+            return first
+    return short_name.strip().upper()
+
 def _time_to_seconds(t):
     parts = t.split(':')
     return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) if len(parts) == 3 else 0
@@ -15,23 +25,75 @@ def _normalize(name):
     n = re.sub(r'\s+', ' ', n)
     return n.strip()
 
-def _fuzzy_match(query, candidates, cutoff=0.55):
-    q = _normalize(query)
-    best = None
-    best_score = 0
-    for c in candidates:
-        cn = _normalize(c)
-        score = max(
-            SequenceMatcher(None, q, cn).ratio(),
-            SequenceMatcher(None, cn, q).ratio()
-        )
-        if q in cn or cn in q:
-            score = max(score, 0.9)
-        if score > best_score:
-            best_score = score
-            best = c
-    if best_score >= cutoff:
-        return best
+# Word-level inverted index for fast fuzzy matching
+_GTFS_WORD_INDEX = {}  # word -> [normalized_name, ...]
+_GTFS_NORM_NAMES = []  # [normalized_name, ...] in same order as _all_gtfs_names
+
+def _build_word_index(names: list):
+    global _GTFS_NORM_NAMES
+    _GTFS_WORD_INDEX.clear()
+    _GTFS_NORM_NAMES = []
+    for n in names:
+        nn = _normalize(n)
+        _GTFS_NORM_NAMES.append(nn)
+        for w in set(nn.split()):
+            if len(w) >= 3:
+                _GTFS_WORD_INDEX.setdefault(w, []).append(nn)
+
+def _fast_fuzzy_match(query: str, candidates: list) -> str | None:
+    qn = _normalize(query)
+    q_words = set(qn.split())
+
+    if not q_words:
+        return None
+
+    # 1) Word-overlap scoring using pre-built index
+    if _GTFS_WORD_INDEX:
+        scores = {}
+        for w in q_words:
+            if len(w) < 3:
+                continue
+            for cn in _GTFS_WORD_INDEX.get(w, []):
+                scores[cn] = scores.get(cn, 0) + 1
+        if scores:
+            best_cn = max(scores, key=scores.get)
+            if scores[best_cn] >= 2:
+                idx = _GTFS_NORM_NAMES.index(best_cn) if best_cn in _GTFS_NORM_NAMES else -1
+                if idx >= 0 and idx < len(candidates):
+                    return candidates[idx]
+                return best_cn
+
+    # 2) Substring match against pre-normalized names
+    for i, nn in enumerate(_GTFS_NORM_NAMES):
+        if qn in nn or nn in qn:
+            if i < len(candidates):
+                return candidates[i]
+
+    # 3) Word-subset match
+    if len(q_words) >= 2:
+        for i, nn in enumerate(_GTFS_NORM_NAMES):
+            cn_words = set(nn.split())
+            common = q_words & cn_words
+            if len(common) >= min(2, len(q_words)) and len(common) >= min(2, len(cn_words)):
+                if i < len(candidates):
+                    return candidates[i]
+
+    # 4) Trigram pre-filter (require 2+ matching trigrams) + get_close_matches
+    q_trigrams = set(qn[i:i+3] for i in range(len(qn)-2))
+    candidates_norm = [nn for nn in _GTFS_NORM_NAMES
+                       if sum(1 for t in q_trigrams if t in nn) >= 2]
+    if not candidates_norm:
+        candidates_norm = [nn for nn in _GTFS_NORM_NAMES
+                           if any(w in nn for w in q_words if len(w) >= 3)]
+    if not candidates_norm:
+        candidates_norm = _GTFS_NORM_NAMES[:100]
+
+    from difflib import get_close_matches
+    matches = get_close_matches(qn, candidates_norm, n=1, cutoff=0.55)
+    if matches:
+        idx = _GTFS_NORM_NAMES.index(matches[0])
+        if idx < len(candidates):
+            return candidates[idx]
     return None
 
 # Test override: set to a datetime string like "2024-01-01 12:00:00" to freeze time
@@ -64,6 +126,7 @@ class GTFSLoader:
         self._stop_times_by_route = {}
         self._name_map = {}
         self._all_gtfs_names = []
+        self._word_index_built = False
         self._loaded = False
 
     def _hav(self, a, b):
@@ -89,7 +152,9 @@ class GTFSLoader:
                     self._stop_times = data.get("stop_times", {})
                     self._stop_times_by_route = data.get("stop_times_by_route", {})
                     self._name_map = data.get("name_map", {})
+                    self._route_id_to_name = data.get("route_id_to_name", {})
                     self._all_gtfs_names = list(self._stop_times.keys())
+                    self._build_word_index()
                     self._loaded = True
                     print(f"[GTFS] Loaded from cache ({len(self._shapes)} shapes, {len(self._stop_times)} stops, {sum(len(v) for v in self._stop_times.values())} times)")
                     return True
@@ -109,6 +174,7 @@ class GTFSLoader:
                     "stop_times": self._stop_times,
                     "stop_times_by_route": self._stop_times_by_route,
                     "name_map": self._name_map,
+                    "route_id_to_name": getattr(self, '_route_id_to_name', {}),
                 }, f, protocol=pickle.HIGHEST_PROTOCOL)
             print(f"[GTFS] Cache saved to {_CACHE_PATH}")
         except Exception as e:
@@ -167,7 +233,7 @@ class GTFSLoader:
                 reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8"))
                 for row in reader:
                     rid = row["route_id"]
-                    sn = row.get("route_short_name", "").strip().upper()
+                    sn = clean_route_short_name(row.get("route_short_name", ""))
                     route_id_to_name[rid] = sn
 
             trip_to_route = {}
@@ -232,43 +298,31 @@ class GTFSLoader:
                 if shape_id not in self._route_shapes[short_name]:
                     self._route_shapes[short_name].append(shape_id)
 
+        self._route_id_to_name = route_id_to_name
         self._all_gtfs_names = list(self._stop_times.keys())
+        self._build_word_index()
         print(f"[GTFS] Loaded {len(self._shapes)} shapes, {len(self._stop_times)} stops with times, {len(self._stop_times_by_route)} routes indexed")
         self._loaded = True
         self._save_cache()
 
+    def _build_word_index(self):
+        _build_word_index(self._all_gtfs_names)
+        self._word_index_built = True
+
+    def pre_resolve_all(self, names: list):
+        for n in names:
+            self._resolve_name(n)
+
     def _resolve_name(self, name: str) -> str | None:
-        """Find the GTFS key for a given stop name using fuzzy matching."""
         key = name.lower().strip()
         if key in self._stop_times:
             return key
         if key in self._name_map:
             return self._name_map[key]
-        match = _fuzzy_match(key, self._all_gtfs_names, cutoff=0.55)
+        match = _fast_fuzzy_match(key, self._all_gtfs_names)
         if match:
             self._name_map[key] = match
             return match
-        # Try normalized exact match
-        nk = _normalize(key)
-        for gn in self._all_gtfs_names:
-            if _normalize(gn) == nk:
-                self._name_map[key] = gn
-                return gn
-        # Try word subset match
-        words = set(nk.split())
-        if len(words) >= 2:
-            for gn in self._all_gtfs_names:
-                gn_words = set(_normalize(gn).split())
-                common = words & gn_words
-                if len(common) >= min(2, len(words)) and len(common) >= min(2, len(gn_words)):
-                    self._name_map[key] = gn
-                    return gn
-        # Last resort: substring match
-        for gn in self._all_gtfs_names:
-            gnn = _normalize(gn)
-            if nk in gnn or gnn in nk:
-                self._name_map[key] = gn
-                return gn
         return None
 
     def get_shape_by_route(self, route_short_name: str):
@@ -573,6 +627,49 @@ class GTFSLoader:
                 seen.add(sk)
                 result.append({"stop_name": sname, "lat": slat, "lng": slng, "distance_to_dest_km": round(self._hav((slat, slng), (dest_lat, dest_lng)), 3)})
         return result
+
+    def get_travel_time_between(self, from_stop: str, to_stop: str, route_filter: str = None) -> float | None:
+        """Estimate travel time in minutes between two stops on the same route
+        using average of actual GTFS stop_times differences."""
+        from_resolved = self._resolve_name(from_stop)
+        to_resolved = self._resolve_name(to_stop)
+        if not from_resolved or not to_resolved:
+            return None
+        fk = from_resolved.strip().lower()
+        tk = to_resolved.strip().lower()
+
+        from_times = self._stop_times.get(from_resolved, [])
+        to_times = self._stop_times.get(to_resolved, [])
+        if not from_times or not to_times:
+            return None
+
+        def _to_sec(t):
+            parts = t.split(':')
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) if len(parts) == 3 else 0
+
+        route_diffs = {}
+        for dep_time, rn in from_times:
+            if route_filter and rn != route_filter.upper() and route_filter.upper() not in rn:
+                continue
+            f_sec = _to_sec(dep_time)
+            for to_time, rn2 in to_times:
+                if rn2 != rn:
+                    continue
+                t_sec = _to_sec(to_time)
+                diff = (t_sec - f_sec) % 86400
+                if 30 <= diff <= 7200:
+                    if rn not in route_diffs:
+                        route_diffs[rn] = []
+                    route_diffs[rn].append(diff)
+
+        all_diffs = []
+        for rn, diffs in route_diffs.items():
+            if diffs:
+                all_diffs.extend(diffs)
+        if not all_diffs:
+            return None
+        avg = sum(all_diffs) / len(all_diffs)
+        return avg / 60
 
     def get_stop_coords(self, stop_name: str):
         """Get (lat, lng) for a GTFS stop."""

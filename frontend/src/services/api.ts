@@ -69,8 +69,17 @@ export async function getBusStops(nearLat?: number, nearLng?: number, radius?: n
   return data
 }
 
-export async function getRidePrices(source: string, destination: string): Promise<RidePriceResponse> {
-  const { data } = await api.get<RidePriceResponse>('/search/ride-prices', { params: { source, destination } })
+export async function getRidePrices(
+  source: string, destination: string,
+  sourceLat?: number, sourceLng?: number,
+  destLat?: number, destLng?: number,
+): Promise<RidePriceResponse> {
+  const params: any = { source, destination }
+  if (sourceLat !== undefined) params.source_lat = sourceLat
+  if (sourceLng !== undefined) params.source_lng = sourceLng
+  if (destLat !== undefined) params.dest_lat = destLat
+  if (destLng !== undefined) params.dest_lng = destLng
+  const { data } = await api.get<RidePriceResponse>('/search/ride-prices', { params })
   return data
 }
 
@@ -100,6 +109,25 @@ export async function getSegmentStep(
   return data
 }
 
+export async function getWeather(lat: number, lng: number): Promise<{ condition?: string; temp?: number; humidity?: number } | null> {
+  try {
+    const { data } = await api.get('/search/weather', { params: { lat, lng } })
+    if (data?.status === 'success' && data.weather?.condition) {
+      const w = data.weather
+      return { condition: w.condition, temp: w.temperature_celsius ?? w.temp, humidity: w.humidity }
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
+export async function getNews(lat?: number, lng?: number): Promise<any[]> {
+  try {
+    const { data } = await api.get('/search/current-events', { params: { lat, lng } })
+    if (data?.status === 'success') return data.events || []
+  } catch { /* ignore */ }
+  return []
+}
+
 export async function getAllSegments(
   fromLat: number, fromLng: number, fromName: string,
   destLat: number, destLng: number, destName: string,
@@ -115,23 +143,5 @@ export async function getAllSegments(
   return data
 }
 
-export async function getMiniPathOptions(
-  sourceLat: number,
-  sourceLng: number,
-  destLat: number,
-  destLng: number,
-  groupSize: number = 1
-): Promise<{ status: string; options: any }> {
-  const { data } = await api.get('/routes/mini-path-options', {
-    params: {
-      source_lat: sourceLat,
-      source_lng: sourceLng,
-      dest_lat: destLat,
-      dest_lng: destLng,
-      group_size: groupSize,
-    }
-  })
-  return data
-}
 
 export default api

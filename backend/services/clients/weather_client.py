@@ -1,4 +1,7 @@
+import logging
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class WeatherClient:
@@ -41,7 +44,8 @@ class WeatherClient:
                             for t, tmp, rp in zip(times, temps, rain_probs)
                         ] if times else [],
                     }
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Weather API failed for {lat},{lng}: {e}")
             return None
         return None
 

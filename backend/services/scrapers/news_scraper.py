@@ -1,17 +1,16 @@
 """Multi-source news scraper for Bengaluru-specific news."""
 
-import httpx
-from bs4 import BeautifulSoup
-from backend.services.proxy_manager import proxy_manager
+import httpx, logging
 from backend.services.clients.reddit_client import reddit_client
+from backend.services.proxy_manager import proxy_manager
+
+logger = logging.getLogger(__name__)
 
 
 class NewsScraper:
-    """Aggregate news from multiple sources:
-    - Reddit r/bangalore (primary, most reliable for local news)
-    - DuckDuckGo News search
-    - Times of India Bangalore
-    - The Hindu Bangalore
+    """Aggregate news from:
+    - Reddit r/bangalore (primary)
+    - DuckDuckGo search for TOI/The Hindu (replaces fragile URL scraping)
     """
 
     async def get_news(
@@ -30,68 +29,38 @@ class NewsScraper:
                     seen_urls.add(item["url"])
                     item["source_type"] = "reddit"
                     all_news.append(item)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Reddit news failed: {e}")
 
-        # 2. DuckDuckGo News
+        # 2. DuckDuckGo News search (replaces fragile TOI/The Hindu URL scraping)
         try:
-            web_news = await self._search_web_news(query or "bangalore", limit)
+            web_news = await self._search_via_ddg(query or "bangalore", limit)
             for item in web_news:
                 if item.get("url") not in seen_urls:
                     seen_urls.add(item["url"])
                     item["source_type"] = "web"
                     all_news.append(item)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"DDG news search failed: {e}")
 
         all_news.sort(key=lambda x: x.get("score", 0) if x.get("source_type") == "reddit" else 0, reverse=True)
         return all_news[:limit]
 
-    async def _search_web_news(self, query: str, limit: int) -> list[dict]:
-        """Search for news via web scraping."""
-        results = []
-        headers = proxy_manager.get_headers()
-        proxy = await proxy_manager.get_proxy(tier=2)
-
-        sources = [
+    async def _search_via_ddg(self, query: str, limit: int) -> list[dict]:
+        """Search news using DuckDuckGo (bypasses fragile direct site scraping)."""
+        from backend.services.scrapers.ddg_scraper import ddg_scraper
+        search_query = f"{query} site:timesofindia.indiatimes.com OR site:thehindu.com OR site:deccanherald.com"
+        results = await ddg_scraper.search(search_query, max_results=limit, use_proxy=True)
+        return [
             {
-                "name": "Times of India",
-                "url": f"https://timesofindia.indiatimes.com/topic/{query.replace(' ', '-')}",
-                "selector": "a[href*='/articleshow/']",
-            },
-            {
-                "name": "The Hindu",
-                "url": f"https://www.thehindu.com/search/?q={query.replace(' ', '+')}",
-                "selector": "a[href*='/article']",
-            },
+                "title": r.get("title", "")[:200],
+                "url": r.get("href", ""),
+                "score": 0,
+                "num_comments": 0,
+                "source": r.get("source", "Web"),
+            }
+            for r in results if r.get("title") and len(r.get("title", "")) > 20
         ]
-
-        for source in sources:
-            try:
-                async with httpx.AsyncClient(
-                    timeout=10.0, proxies=proxy, verify=False, follow_redirects=True
-                ) as client:
-                    resp = await client.get(source["url"], headers=headers)
-                    if resp.status_code == 200:
-                        soup = BeautifulSoup(resp.text, "html.parser")
-                        links = soup.select(source["selector"])[:limit]
-                        for link in links:
-                            href = link.get("href", "")
-                            if href and not href.startswith("http"):
-                                href = f"https://{source['name'].lower().replace(' ', '')}.indiatimes.com{href}"
-                            title = link.get_text(strip=True)
-                            if title and len(title) > 20:
-                                results.append({
-                                    "title": title[:200],
-                                    "url": href,
-                                    "score": 0,
-                                    "num_comments": 0,
-                                    "source": source["name"],
-                                })
-            except Exception:
-                continue
-
-        return results
 
     async def get_traffic_news(self, limit: int = 3) -> list[dict]:
         """Get traffic-specific news."""

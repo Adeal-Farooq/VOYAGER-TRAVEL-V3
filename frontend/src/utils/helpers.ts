@@ -113,15 +113,6 @@ export function getScoreLabel(score: number): string {
   return 'Avoid'
 }
 
-export function getPinColor(isRecommended: boolean, score?: number): string {
-  if (score !== undefined) {
-    if (score >= 80) return '#22c55e'
-    if (score >= 60) return '#eab308'
-    return '#ef4444'
-  }
-  return isRecommended ? '#22c55e' : '#ef4444'
-}
-
 export function getModeIconName(mode: string): string {
   const map: Record<string, string> = {
     walk: 'directions_walk',

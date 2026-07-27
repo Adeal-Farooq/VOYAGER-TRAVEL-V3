@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { PlaceResult } from '../types'
 import { searchPlaces, getNearbyPlaces, getSuggestions } from '../services/api'
-import { getPlaceIconName, getScoreLabel } from '../utils/helpers'
+import { getPlaceIconName, getScoreLabel, getScoreColor } from '../utils/helpers'
+import { useApp } from '../context/AppContext'
 
 interface SearchPanelProps {
   onSelectPlace: (place: PlaceResult) => void
@@ -37,6 +38,7 @@ const NEARBY_TAGS = [
 export default function SearchPanel({
   onSelectPlace, onViewOnMap, onViewDetails, onNavigateToPlace, enrichingName,
 }: SearchPanelProps) {
+  const { userLocation, setAllMarkers } = useApp()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<PlaceResult[]>([])
   const [suggestions, setSuggestions] = useState<string[]>([])
@@ -57,10 +59,12 @@ export default function SearchPanel({
     searchAbortRef.current = ctrl
     setLoading(true); setError('')
     try {
-      const data = await searchPlaces(q, 12.9716, 77.5946, ctrl.signal)
+      const centerLat = userLocation?.[0] ?? 12.9716
+      const centerLng = userLocation?.[1] ?? 77.5946
+      const data = await searchPlaces(q, centerLat, centerLng, ctrl.signal)
       if (ctrl.signal.aborted) return
       const places = data.results || []
-      setResults(places); setSuggestions([])
+      setResults(places); setSuggestions([]); setAllMarkers(places)
       if (places.length > 0) {
         setSearchedPlace(places[0])
         onSelectPlace(places[0])
@@ -69,7 +73,7 @@ export default function SearchPanel({
       if (ctrl.signal.aborted) return
       setError('Search failed. Please try again.')
     } finally { setLoading(false) }
-  }, [query, onSelectPlace])
+  }, [query, onSelectPlace, userLocation])
 
   useEffect(() => {
     if (!query || query.length < 2) { setSuggestions([]); return }
@@ -83,15 +87,15 @@ export default function SearchPanel({
   const handleNearby = useCallback(async (tag: string) => {
     setActiveTag(tag); setLoading(true); setError('')
     try {
-      const lat = searchedPlace ? searchedPlace.lat : 12.9716
-      const lng = searchedPlace ? searchedPlace.lng : 77.5946
+      const lat = searchedPlace?.lat ?? userLocation?.[0] ?? 12.9716
+      const lng = searchedPlace?.lng ?? userLocation?.[1] ?? 77.5946
       const data = await getNearbyPlaces(lat, lng, radius, tag === 'all' ? undefined : tag)
       const places = data.results || []
-      setNearbyResults(places)
+      setNearbyResults(places); setAllMarkers(places)
       if (places.length === 0) setError(`No ${tag} found within ${radius}km. Try increasing radius.`)
     } catch { setError('Nearby search failed.') }
     finally { setLoading(false) }
-  }, [radius, searchedPlace])
+  }, [radius, searchedPlace, userLocation])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSearch()
@@ -108,7 +112,12 @@ export default function SearchPanel({
           }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--text-muted)' }}>search</span>
             <input type="text" placeholder="Search any place in Bengaluru..."
-              value={query} onChange={(e) => setQuery(e.target.value)}
+              value={query} onChange={(e) => {
+                setQuery(e.target.value)
+                if (!e.target.value.trim()) {
+                  setResults([]); setSuggestions([]); setAllMarkers([])
+                }
+              }}
               onKeyDown={handleKeyDown}
               style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: 14, color: 'var(--text)' }}
             />
@@ -221,7 +230,7 @@ export default function SearchPanel({
                   display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
                   padding: '6px 14px', border: '1px solid var(--outline-variant)',
                   borderRadius: 'var(--radius-full)',
-                  background: activeTag === tag.key ? 'var(--primary)' : 'rgba(255,255,255,0.8)',
+                  background: activeTag === tag.key ? 'var(--primary)' : 'var(--surface-container)',
                   color: activeTag === tag.key ? 'var(--on-primary)' : 'var(--text-muted)',
                   fontSize: 12, cursor: 'pointer', fontWeight: 500, transition: 'all 0.15s',
                 }}>
@@ -262,8 +271,6 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
   place: PlaceResult; onView: () => void; onNavigate: () => void; onViewDetails?: () => void; isLoading?: boolean
 }) {
   const score = place.reliability_score || 0.5
-  const isGood = score >= 0.7
-  const isMid = score >= 0.4 && score < 0.7
   const [imgError, setImgError] = useState(false)
   const [showReviews, setShowReviews] = useState(false)
   const reviews = place.reviews?.slice(0, 3) || []
@@ -271,9 +278,9 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
   return (
     <div onClick={onView} className="slide-up" style={{
       padding: 14, marginBottom: 10, borderRadius: 'var(--radius-lg)', cursor: 'pointer',
-      background: isGood ? '#f0fdf4' : isMid ? '#fffbeb' : '#fef2f2',
-      border: `1px solid ${isGood ? '#bbf7d0' : isMid ? '#fde68a' : '#fecaca'}`,
-      borderLeft: `3px solid ${isGood ? 'var(--secondary)' : isMid ? '#eab308' : 'var(--error)'}`,
+      background: getScoreColor(score * 100) === '#22c55e' ? '#f0fdf4' : getScoreColor(score * 100) === '#eab308' ? '#fffbeb' : '#fef2f2',
+      border: `1px solid ${getScoreColor(score * 100) === '#22c55e' ? '#bbf7d0' : getScoreColor(score * 100) === '#eab308' ? '#fde68a' : '#fecaca'}`,
+      borderLeft: `3px solid ${getScoreColor(score * 100)}`,
       transition: 'all 0.2s',
     }}>
       {place.image_url && !imgError && (
@@ -286,12 +293,12 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         <span className="material-symbols-outlined fill" style={{
-          fontSize: 20, color: isGood ? '#16a34a' : isMid ? '#ca8a04' : '#dc2626',
+          fontSize: 20, color: getScoreColor(score * 100),
         }}>{getPlaceIconName(place.place_type)}</span>
         <span className="text-headline-sm" style={{ flex: 1 }}>{place.name}</span>
-        <span className={`reliability-pill ${isGood ? 'good' : isMid ? 'mid' : 'bad'}`}>
-          <span className="material-symbols-outlined" style={{ fontSize: 12 }}>{isGood ? 'verified' : isMid ? 'info' : 'warning'}</span>
-          {getScoreLabel(score)} ({(score * 100).toFixed(0)}%)
+        <span className="reliability-pill" style={{ background: getScoreColor(score * 100), color: 'white', fontSize: 11, padding: '2px 10px' }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 12 }}>{score >= 0.6 ? 'verified' : 'warning'}</span>
+          {getScoreLabel(score * 100)} ({(score * 100).toFixed(0)}%)
         </span>
       </div>
 
@@ -323,7 +330,7 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
       {place.review_summary && (
         <div className="text-body-sm" style={{
           padding: '6px 10px', borderRadius: 'var(--radius-md)',
-          background: 'rgba(255,255,255,0.6)', fontStyle: 'italic', marginBottom: 6,
+          background: 'var(--surface-container)', fontStyle: 'italic', marginBottom: 6,
         }}>
           <span className="material-symbols-outlined" style={{ fontSize: 12, verticalAlign: 'middle', marginRight: 2, color: 'var(--primary)' }}>rate_review</span>
           {place.review_summary}
@@ -338,12 +345,12 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
             {showReviews ? 'Hide' : 'Show'} reviews ({reviews.length})
           </button>
           {showReviews && reviews.map((rv, idx) => (
-            <div key={idx} style={{ marginTop: 4, padding: '6px 8px', background: 'rgba(255,255,255,0.5)', borderRadius: 'var(--radius-md)', fontSize: 12 }}>
+            <div key={idx} style={{ marginTop: 4, padding: '6px 8px', background: 'var(--surface-container-lowest)', borderRadius: 'var(--radius-md)', fontSize: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
                 <span style={{ fontWeight: 500 }}>{rv.user}</span>
                 <span>{Array.from({length: rv.rating}, () => '⭐').join('')} <span style={{ fontSize: 11 }}>{rv.date}</span></span>
               </div>
-              <div style={{ fontStyle: 'italic', marginTop: 2, color: '#555' }}>"{rv.text}"</div>
+              <div style={{ fontStyle: 'italic', marginTop: 2, color: 'var(--text-muted)' }}>"{rv.text}"</div>
             </div>
           ))}
         </div>
@@ -351,7 +358,7 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
 
       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
         <button onClick={(e) => { e.stopPropagation(); onViewDetails?.() }} disabled={isLoading}
-          style={{ padding: '6px 14px', border: '1px solid var(--outline-variant)', borderRadius: 'var(--radius-full)', background: 'rgba(255,255,255,0.8)', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+          style={{ padding: '6px 14px', border: '1px solid var(--outline-variant)', borderRadius: 'var(--radius-full)', background: 'var(--surface-container)', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>info</span>
           Details
         </button>

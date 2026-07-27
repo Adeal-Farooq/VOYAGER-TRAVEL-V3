@@ -29,3 +29,7 @@ Thumbs.db
 
 .env
 .env.example
+node_modules/
+n8n-instance/
+osrm-data/
+osrm-data-foot/

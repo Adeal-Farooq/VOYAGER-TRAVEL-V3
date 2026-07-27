@@ -1,10 +1,13 @@
-import math, json, csv, os, asyncio
+import math, json, csv, os, asyncio, logging
+from datetime import datetime
 import httpx
 from fastapi import APIRouter, Query
 from backend.models.transit import ATobRequest
 from backend.services.transit_service import transit_service
 from backend.agents.llm_agent import llm_agent
 from backend.core.database import db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/routes", tags=["Routes"])
 
@@ -87,8 +90,8 @@ async def plan_route(request: ATobRequest):
                 await asyncio.gather(*tasks, return_exceptions=True)
             try:
                 await asyncio.wait_for(enrich_seg(), timeout=15.0)
-            except:
-                pass
+            except asyncio.TimeoutError:
+                logger.warning(f"Segment enrichment timeout for stop {i}")
             seg_driving = await transit_service.get_driving_route(a["lat"], a["lng"], b["lat"], b["lng"])
             seg_driving_list = []
             if seg_driving:
@@ -112,8 +115,9 @@ async def plan_route(request: ATobRequest):
 
         all_routes = _combine_multi_stop_routes(segment_routes)
         try:
-            weather = await asyncio.wait_for(llm_agent.get_weather_impact(), timeout=5.0)
-        except:
+            weather = await asyncio.wait_for(llm_agent.get_weather_impact(lat=request.source_lat, lng=request.source_lng), timeout=5.0)
+        except Exception as e:
+            logger.warning(f"Weather fetch (multi-stop) failed: {e}")
             weather = {}
         return _sanitize({
             "status": "success", "multi_stop": True,
@@ -123,8 +127,8 @@ async def plan_route(request: ATobRequest):
             "routes": all_routes, "total_options": len(all_routes), "weather": weather
         })
 
-    metro_station_near_source = db.find_nearby_metro_stations(request.source_lat, request.source_lng, 2.0)
-    metro_station_near_dest = db.find_nearby_metro_stations(request.dest_lat, request.dest_lng, 2.0)
+    metro_station_near_source = db.find_nearby_metro_stations(request.source_lat, request.source_lng, 3.0)
+    metro_station_near_dest = db.find_nearby_metro_stations(request.dest_lat, request.dest_lng, 3.0)
     bus_near_source = db.find_nearby_bus_stops(request.source_lat, request.source_lng, 1.0)
     bus_near_dest = db.find_nearby_bus_stops(request.dest_lat, request.dest_lng, 1.0)
 
@@ -174,6 +178,10 @@ async def plan_route(request: ATobRequest):
             request.dest_lat, request.dest_lng
         )
         walk_time = dist * 12
+        path = transit_service._interpolate_path(
+            request.source_lat, request.source_lng,
+            request.dest_lat, request.dest_lng, 20
+        )
         return {
             "status": "success",
             "mode": "walking",
@@ -192,32 +200,51 @@ async def plan_route(request: ATobRequest):
                     "distance_km": round(dist, 2),
                     "duration_minutes": round(walk_time),
                     "fare": 0,
-                    "instructions": f"Walk {dist:.1f}km - about {walk_time:.0f} minutes"
+                    "instructions": f"Walk {dist:.1f}km - about {walk_time:.0f} minutes",
+                    "path": path,
                 }]
             }]
         }
 
-    public_routes = transit_service.get_route_legs_public(
-        request.source_lat, request.source_lng,
-        request.dest_lat, request.dest_lng,
-        request.budget, request.group_size
-    )
-
-    # Parallel path enrichment for all public routes
-    async def enrich_all():
-        tasks = [transit_service._add_leg_paths(r) for r in public_routes]
-        await asyncio.gather(*tasks, return_exceptions=True)
     try:
-        await asyncio.wait_for(enrich_all(), timeout=30.0)
-    except:
-        pass
+        weather = await asyncio.wait_for(llm_agent.get_weather_impact(lat=request.source_lat, lng=request.source_lng), timeout=5.0)
+    except Exception as e:
+        logger.warning(f"Weather fetch failed: {e}")
+        weather = {}
 
-    driving = await transit_service.get_driving_route(
-        request.source_lat, request.source_lng,
-        request.dest_lat, request.dest_lng
-    )
+    loop = asyncio.get_running_loop()
+    try:
+        public_routes = await asyncio.wait_for(
+            loop.run_in_executor(None, transit_service.get_route_legs_public, request.source_lat, request.source_lng, request.dest_lat, request.dest_lng, request.budget, request.group_size, weather),
+            timeout=30.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Public route generation timed out, using empty")
+        public_routes = []
 
-    live_prices = await llm_agent.get_live_prices(source_name, dest_name)
+    if public_routes:
+        async def enrich_all():
+            tasks = [transit_service._add_leg_paths(r) for r in public_routes]
+            await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(enrich_all(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.warning("Public route path enrichment timed out")
+
+    try:
+        driving = await asyncio.wait_for(transit_service.get_driving_route(
+            request.source_lat, request.source_lng,
+            request.dest_lat, request.dest_lng
+        ), timeout=8.0)
+    except asyncio.TimeoutError:
+        logger.warning("Driving route fetch timed out")
+        driving = None
+
+    try:
+        live_prices = await asyncio.wait_for(llm_agent.get_live_prices(source_name, dest_name), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Live prices timed out")
+        live_prices = []
 
     all_routes = list(public_routes)
 
@@ -266,12 +293,7 @@ async def plan_route(request: ATobRequest):
                 }]
             })
 
-    try:
-        weather = await asyncio.wait_for(llm_agent.get_weather_impact(), timeout=5.0)
-    except:
-        weather = {}
     is_rainy = "rain" in (weather.get("condition", "") or "").lower()
-    from datetime import datetime
     current_hour = datetime.now().hour
     is_night = current_hour < 6 or current_hour > 20
 
@@ -297,15 +319,19 @@ async def plan_route(request: ATobRequest):
 
     all_routes.sort(key=lambda x: (x["overall_score"], -x.get("total_fare", 999)), reverse=True)
 
-    travel_recs = await llm_agent.get_travel_recs(
-        source_name, dest_name, request.group_size, request.budget
-    )
+    try:
+        travel_recs = await asyncio.wait_for(
+            llm_agent.get_travel_recs(source_name, dest_name, request.group_size, request.budget), timeout=8.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Travel recs timed out")
+        travel_recs = []
 
     return _sanitize({
         "status": "success",
         "source": {"lat": request.source_lat, "lng": request.source_lng, "name": source_name},
         "destination": {"lat": request.dest_lat, "lng": request.dest_lng, "name": dest_name},
-        "routes": all_routes[:6],
+        "routes": all_routes[:15],
         "total_options": len(all_routes),
         "recommendations": travel_recs,
         "weather": weather
@@ -354,72 +380,75 @@ async def get_all_segments(
     group_size: int = Query(1), budget: float = Query(None),
     max_depth: int = Query(3),
 ):
-    result = transit_service.get_all_segments(
-        from_lat, from_lng, from_name, dest_lat, dest_lng, dest_name, group_size, budget, max_depth
-    )
+    loop = asyncio.get_running_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, transit_service.get_all_segments, from_lat, from_lng, from_name, dest_lat, dest_lng, dest_name, group_size, budget, max_depth),
+            timeout=60.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning("get_all_segments timed out")
+        result = {"segments": []}
     # Fire LLM live pricing concurrently with OSRM path fetching
     async def _fetch_live_prices():
         try:
             return await asyncio.wait_for(
                 llm_agent.get_live_prices(from_name, dest_name), timeout=8.0
             )
-        except:
+        except Exception as e:
+            logger.warning(f"Live prices fetch failed: {e}")
             return []
     llm_task = asyncio.create_task(_fetch_live_prices())
 
-    # Quick OSRM health check — skip all OSRM requests if server is down
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as c:
-            r = await c.get("https://router.project-osrm.org/route/v1/driving/77.6,12.97;77.57,12.97?overview=false")
-            osrm_ok = r.status_code == 200
-    except:
-        osrm_ok = False
+    # OSRM actual path fetching (fast — limited to top options)
+    osrm_ok = False
+    for url in ["http://localhost:5000", "http://osrm-car:5000"]:
+        try:
+            async with httpx.AsyncClient(timeout=1.5) as c:
+                r = await c.get(f"{url}/route/v1/driving/77.6,12.97;77.57,12.97?overview=false")
+                if r.status_code == 200:
+                    osrm_ok = True
+                    break
+        except: continue
 
     path_tasks = []
     if osrm_ok:
-        osrm_sem = asyncio.Semaphore(15)
-        async def _fetch_osrm(opt, profile):
-            async with osrm_sem:
+        sem = asyncio.Semaphore(8)
+        async def _fetch(opt, profile):
+            async with sem:
                 try:
-                    p = await transit_service.get_osrm_path_between(opt["from_lat"], opt["from_lng"], opt["to_lat"], opt["to_lng"], profile)
-                    if p:
-                        opt["path"] = p
-                except:
-                    pass
-        profile_map = {
-            "walk": "walking", "cab": "driving", "cab_xl": "driving",
-            "cab_women": "driving", "cab_pet": "driving", "auto": "driving",
-            "bike": "driving",
-        }
+                    p = await asyncio.wait_for(
+                        transit_service.get_osrm_path_between(opt["from_lat"], opt["from_lng"], opt["to_lat"], opt["to_lng"], profile),
+                        timeout=3.0
+                    )
+                    if p: opt["path"] = p
+                except: pass
+        pm = {"walk":"walking","cab":"driving","cab_xl":"driving","cab_women":"driving","cab_pet":"driving","auto":"driving","bike":"driving"}
         for seg in result.get("segments", []):
-            for opt in seg.get("direct_options", []):
-                mode = opt.get("mode", "")
-                profile = profile_map.get(mode)
-                if profile and not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
-                    path_tasks.append(_fetch_osrm(opt, profile))
-            for dest in seg.get("destinations", []):
-                for opt in dest.get("reach_options", []):
-                    mode = opt.get("mode", "")
-                    profile = profile_map.get(mode)
-                    if profile and not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
-                        path_tasks.append(_fetch_osrm(opt, profile))
-                for opt in dest.get("transit_options", []):
-                    mode = opt.get("mode", "")
-                    profile = profile_map.get(mode)
-                    if profile and not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
-                        path_tasks.append(_fetch_osrm(opt, profile))
-                    for fopt in opt.get("final_options", []):
-                        fmode = fopt.get("mode", "")
-                        fprofile = profile_map.get(fmode)
-                        if fprofile and not fopt.get("path") and fopt.get("from_lat") and fopt.get("to_lat"):
-                            path_tasks.append(_fetch_osrm(fopt, fprofile))
+            for opt in seg.get("direct_options", [])[:3]:
+                pr = pm.get(opt.get("mode",""))
+                if pr and not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
+                    path_tasks.append(_fetch(opt, pr))
+            for dest in seg.get("destinations", [])[:3]:
+                for opt in dest.get("reach_options", [])[:2]:
+                    pr = pm.get(opt.get("mode",""))
+                    if pr and not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
+                        path_tasks.append(_fetch(opt, pr))
+                for opt in dest.get("transit_options", [])[:3]:
+                    pr = pm.get(opt.get("mode",""))
+                    if pr and not opt.get("path") and opt.get("from_lat") and opt.get("to_lat"):
+                        path_tasks.append(_fetch(opt, pr))
+                    for fopt in opt.get("final_options", [])[:2]:
+                        fpr = pm.get(fopt.get("mode",""))
+                        if fpr and not fopt.get("path") and fopt.get("from_lat") and fopt.get("to_lat"):
+                            path_tasks.append(_fetch(fopt, fpr))
     if path_tasks:
         try:
-            await asyncio.wait_for(asyncio.gather(*path_tasks), timeout=20.0)
-        except:
-            pass
+            await asyncio.wait_for(asyncio.gather(*path_tasks), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"OSRM batch paths partial ({len(path_tasks)} tasks, 10s timeout)")
 
-    # Apply live prices if LLM returned them
+    # Live prices from LLM
     live_prices = await llm_task
     if live_prices:
         price_map = {}
@@ -480,42 +509,6 @@ async def get_all_segments(
         }
     })
 
-
-@router.get("/mini-path-options")
-async def get_mini_path_options(
-    source_lat: float = Query(...),
-    source_lng: float = Query(...),
-    dest_lat: float = Query(...),
-    dest_lng: float = Query(...),
-    group_size: int = Query(1)
-):
-    options = transit_service.get_mini_path_options(
-        source_lat, source_lng, dest_lat, dest_lng, group_size
-    )
-    # Add paths to mini-path options (walking for walk modes, driving for cab/auto, driving for transit rides)
-    all_opts = []
-    for key in ("source_walk_options", "direct_ride_options"):
-        for opt in options.get(key, []):
-            all_opts.append(opt)
-    for key in ("source_to_transit", "transit_ride_options"):
-        if isinstance(options.get(key), dict):
-            for mode_list in options.get(key, {}).values():
-                all_opts.extend(mode_list)
-        elif isinstance(options.get(key), list):
-            all_opts.extend(options.get(key))
-    for key in ("transit_to_dest",):
-        if isinstance(options.get(key), dict):
-            for mode_list in options.get(key, {}).values():
-                all_opts.extend(mode_list)
-    for opt in all_opts:
-        f_lat, f_lng = opt.get("from_lat"), opt.get("from_lng")
-        t_lat, t_lng = opt.get("to_lat"), opt.get("to_lng")
-        if f_lat and f_lng and t_lat and t_lng:
-            profile = "driving" if opt.get("mode") in ("cab", "auto", "cab_xl", "cab_women", "cab_pet", "bike") else "walking"
-            path = await transit_service.get_osrm_path_between(f_lat, f_lng, t_lat, t_lng, profile)
-            if path:
-                opt["path"] = path
-    return _sanitize({"status": "success", "options": options})
 
 @router.get("/segment-step")
 async def get_segment_step(
@@ -607,37 +600,41 @@ _ROAD_COLORS = {
 }
 _ROAD_ORDER = ["motorway", "trunk", "primary", "secondary", "tertiary", "residential", "service", "living_street", "unclassified"]
 
-_road_geojson_cache = None
-_traffic_speeds_cache = None
+_traffic_speed_cache = None
 _last_speed_load = 0
 
-def _load_traffic_speeds():
-    global _traffic_speeds_cache, _last_speed_load
-    now = __import__("time").time()
-    if _traffic_speeds_cache is not None and now - _last_speed_load < 60:
-        return _traffic_speeds_cache
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data_cache", "traffic_logs.csv")
-    speed_map = {}
-    if os.path.exists(path):
-        with open(path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                step = int(row["step_time"])
-                speed = float(row["live_speed_mps"])
-                if step not in speed_map:
-                    speed_map[step] = []
-                speed_map[step].append(speed)
-    avg_speeds = {step: sum(v)/len(v) for step, v in speed_map.items()}
-    _traffic_speeds_cache = avg_speeds
-    _last_speed_load = now
-    return avg_speeds
-
 def _get_current_speed():
-    speeds = _load_traffic_speeds()
-    if not speeds:
-        return 15.0
-    latest_step = max(speeds.keys())
-    return speeds[latest_step]
+    """Realistic speed model based on time-of-day instead of synthetic CSV."""
+    global _traffic_speed_cache, _last_speed_load
+    now_ts = __import__("time").time()
+    if _traffic_speed_cache is not None and now_ts - _last_speed_load < 60:
+        return _traffic_speed_cache
+    from datetime import datetime
+    h = datetime.now().hour
+    wd = datetime.now().weekday()
+    base = 25.0
+    if wd < 5:
+        if 8 <= h < 10:
+            base = 12.0
+        elif 10 <= h < 12:
+            base = 18.0
+        elif 12 <= h < 16:
+            base = 22.0
+        elif 16 <= h < 19:
+            base = 10.0
+        elif 19 <= h < 21:
+            base = 16.0
+        elif 21 <= h or h < 6:
+            base = 30.0
+        else:
+            base = 20.0
+    else:
+        base = 28.0 if 10 <= h < 18 else 32.0
+    import random
+    base += random.uniform(-2, 2)
+    _traffic_speed_cache = base
+    _last_speed_load = now_ts
+    return base
 
 @router.get("/traffic-overlay")
 async def get_traffic_overlay(

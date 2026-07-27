@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import settings
 from backend.core.database import db
 from backend.api import search, routes
+from backend.api.search import langgraph_router
  
 app = FastAPI(
     title=settings.APP_NAME,
@@ -21,6 +22,7 @@ app.add_middleware(
 
 app.include_router(search.router)
 app.include_router(routes.router)
+app.include_router(langgraph_router)
 
 @app.on_event("startup")
 async def startup():
@@ -32,9 +34,7 @@ async def startup():
         print(f"[MAIN] Test time override: {test_time}")
 
     db.initialize()
-    # Preload GTFS data synchronously (takes ~40s once)
-    from backend.services.transit_service import _ensure_gtfs
-    _ensure_gtfs()
+    # GTFS loads lazily on first route request (avoids ~40s startup block)
 
 @app.get("/")
 async def root():

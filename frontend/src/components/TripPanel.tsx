@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useApp } from '../context/AppContext'
 
 export default function TripPanel() {
-  const { startJourney, stopJourney, trackingActive, liveTrackingPos, ridePrices } = useApp()
+  const { startJourney, stopJourney, trackingActive, liveTrackingPos, ridePrices, setMode } = useApp()
   const [activeDay, setActiveDay] = useState(0)
 
   return (
@@ -20,7 +20,7 @@ export default function TripPanel() {
         </div>
       </div>
 
-      <button onClick={() => {}}
+      <button onClick={() => { setMode('atob') }}
         style={{
           width: '100%', padding: 16, marginBottom: 16, border: '2px dashed var(--outline-variant)',
           borderRadius: 'var(--radius-xl)', background: 'transparent', cursor: 'pointer',

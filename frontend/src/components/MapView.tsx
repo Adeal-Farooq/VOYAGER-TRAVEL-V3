@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { MapContainer, TileLayer, useMap, Polyline, Marker, Popup, CircleMarker } from 'react-leaflet'
 import L from 'leaflet'
 import type { PlaceResult, MapRouteGeometry, NewsItem } from '../types'
-import { getPlaceIconName, getScoreLabel } from '../utils/helpers'
+import { getPlaceIconName, getScoreLabel, getScoreColor } from '../utils/helpers'
 
 interface MapViewProps {
   mapRef: React.MutableRefObject<any>
@@ -27,14 +27,17 @@ function MapController({ mapRef, onCenterChange, center }: {
 }) {
   const map = useMap()
   mapRef.current = map
+  const cbRef = useRef(onCenterChange)
+  cbRef.current = onCenterChange
   useEffect(() => {
-    if (onCenterChange) {
-      map.on('moveend', () => {
-        const c = map.getCenter()
-        onCenterChange([c.lat, c.lng])
-      })
+    if (!cbRef.current) return
+    const handler = () => {
+      const c = map.getCenter()
+      cbRef.current?.([c.lat, c.lng])
     }
-  }, [map, onCenterChange])
+    map.on('moveend', handler)
+    return () => map.off('moveend', handler)
+  }, [map])
   return null
 }
 
@@ -51,7 +54,7 @@ function UserLocationMarker({ position }: { position: [number, number] }) {
 
 function createPinHtml(place: PlaceResult): string {
   const score = place.reliability_score || 0.5
-  const color = score >= 0.7 ? '#22c55e' : score >= 0.4 ? '#eab308' : '#ef4444'
+  const color = getScoreColor(score * 100)
   const icon = getPlaceIconName(place.place_type)
   return `<div style="position:relative;width:32px;height:32px;">
     <div style="position:absolute;top:0;left:0;width:32px;height:32px;border-radius:50%;background:${color};border:2px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-size:16px;color:white;cursor:pointer;transition:all 0.2s;"
@@ -63,7 +66,6 @@ function createPinHtml(place: PlaceResult): string {
 
 function PlaceMarker({ place, onClick }: { place: PlaceResult; onClick?: (p: PlaceResult) => void }) {
   const score = place.reliability_score || 0.5
-  const isGood = score >= 0.7
   return (
     <Marker position={[place.lat, place.lng]}
       icon={L.divIcon({ className: '', html: createPinHtml(place), iconSize: [32, 32], iconAnchor: [16, 16] })}
@@ -74,7 +76,7 @@ function PlaceMarker({ place, onClick }: { place: PlaceResult; onClick?: (p: Pla
           <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>{place.place_type.replace(/_/g, ' ')}</div>
           {place.rating && <div style={{ fontSize: 12, marginBottom: 2 }}>⭐ {place.rating.toFixed(1)}</div>}
           <div style={{ fontSize: 12, marginBottom: 2 }}>
-            Reliability: <span style={{ color: isGood ? '#16a34a' : '#dc2626', fontWeight: 600 }}>{(score * 100).toFixed(0)}%</span>
+            Reliability: <span style={{ color: getScoreColor(score * 100), fontWeight: 600 }}>{(score * 100).toFixed(0)}%</span>
           </div>
           {place.review_summary && (
             <div style={{ fontSize: 11, fontStyle: 'italic', marginTop: 4, color: '#666', lineHeight: 1.4 }}>{place.review_summary}</div>
@@ -111,6 +113,15 @@ export default function MapView({
         <PlaceMarker key={i} place={place} onClick={onMarkerClick} />
       ))}
 
+      {selectedPlace && !allMarkers.some(m => m.name === selectedPlace.name && m.lat === selectedPlace.lat) && (
+        <Marker position={[selectedPlace.lat, selectedPlace.lng]} icon={L.divIcon({
+          className: '', html: `<div style="width:36px;height:36px;border-radius:50%;background:#8b5cf6;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(139,92,246,0.5);font-size:18px;color:white;animation:pulse-ring 2s cubic-bezier(0.4,0,0.6,1) infinite;"><span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL'1">star</span></div>`,
+          iconSize: [36, 36], iconAnchor: [18, 18],
+        })}>
+          <Popup>{selectedPlace.name}</Popup>
+        </Marker>
+      )}
+
       {routeGeometry?.map((geo, i) => (
         geo.type === 'stop' ? (
           <CircleMarker key={i} center={geo.coordinates[0]} radius={6}
@@ -131,8 +142,8 @@ export default function MapView({
 
       {sourceLocation && (
         <Marker position={sourceLocation} icon={L.divIcon({
-          className: '', html: `<div class="marker-pin source"><span class="material-symbols-outlined" style="font-size:16px">trip_origin</span></div>`,
-          iconSize: [28, 28], iconAnchor: [14, 14],
+          className: '', html: `<div style="width:32px;height:32px;border-radius:50%;background:#22c55e;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(34,197,94,0.4);font-size:16px;color:white;"><span class="material-symbols-outlined" style="font-size:16px;font-variation-settings:'FILL'1">trip_origin</span></div>`,
+          iconSize: [32, 32], iconAnchor: [16, 16],
         })}>
           <Popup>Source</Popup>
         </Marker>
@@ -140,8 +151,8 @@ export default function MapView({
 
       {destLocation && (
         <Marker position={destLocation} icon={L.divIcon({
-          className: '', html: `<div class="marker-pin dest"><span class="material-symbols-outlined" style="font-size:16px">location_on</span></div>`,
-          iconSize: [28, 28], iconAnchor: [14, 14],
+          className: '', html: `<div style="position:relative;width:40px;height:40px;"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;border-radius:50%;background:rgba(239,68,68,0.15);animation:pulse-ring 2s cubic-bezier(0.4,0,0.6,1) infinite;"></div><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;border-radius:50%;background:#ef4444;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(239,68,68,0.4);font-size:18px;color:white;"><span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL'1">location_on</span></div></div>`,
+          iconSize: [40, 40], iconAnchor: [20, 20],
         })}>
           <Popup>Destination</Popup>
         </Marker>

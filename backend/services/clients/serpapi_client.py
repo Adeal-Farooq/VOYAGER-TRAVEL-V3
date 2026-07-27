@@ -1,6 +1,9 @@
+import logging
 import httpx
 import urllib.parse
 from typing import Any
+
+logger = logging.getLogger(__name__)
 from backend.core.config import settings
 
 
@@ -62,7 +65,8 @@ class SerpAPIClient:
                 if resp.status_code == 200:
                     data = resp.json()
                     return self._parse_places(data.get("local_results", []))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"SerpAPI search_places failed for '{query}': {e}")
             return []
 
     async def nearby_places(
@@ -88,7 +92,8 @@ class SerpAPIClient:
                 if resp.status_code == 200:
                     data = resp.json()
                     return self._parse_places(data.get("local_results", []))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"SerpAPI nearby_places failed for {place_type} at {lat},{lng}: {e}")
             return []
 
     async def place_details(self, place_id: str) -> dict | None:
@@ -108,7 +113,8 @@ class SerpAPIClient:
                 if resp.status_code == 200:
                     data = resp.json()
                     return self._parse_place_detail(data)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"SerpAPI place_details failed for {place_id}: {e}")
             return None
 
     def _parse_places(self, results: list[dict]) -> list[dict]:
@@ -136,26 +142,36 @@ class SerpAPIClient:
     def _parse_place_detail(self, data: dict) -> dict | None:
         if not data:
             return None
-        place_data = data.get("place", data.get("local_results", {}))
+        place_data = data.get("place_results") or data.get("place") or data.get("local_results", {})
         if not place_data:
             return None
 
-        reviews = place_data.get("reviews", [])
+        # Reviews: could be list (old format) or int (count) with actual reviews in user_reviews.most_relevant
+        raw_reviews = place_data.get("reviews", [])
+        if isinstance(raw_reviews, int):
+            user_reviews_data = place_data.get("user_reviews", {})
+            if isinstance(user_reviews_data, dict):
+                raw_reviews = user_reviews_data.get("most_relevant", []) or []
+            else:
+                raw_reviews = []
+        elif not isinstance(raw_reviews, list):
+            raw_reviews = []
+
         photos_meta = place_data.get("photos", [])
 
         return {
             "name": place_data.get("title", ""),
             "rating": place_data.get("rating", 0),
-            "review_count": place_data.get("reviews", 0),
+            "review_count": place_data.get("reviews", 0) if isinstance(place_data.get("reviews"), int) else len(raw_reviews),
             "reviews": [
                 {
-                    "author": r.get("user", {}).get("name", "Anonymous"),
+                    "author": r.get("username") or r.get("user", {}).get("name", "Anonymous"),
                     "rating": r.get("rating", 0),
-                    "text": r.get("snippet", r.get("text", "")),
+                    "text": r.get("description") or r.get("snippet") or r.get("text", ""),
                     "date": r.get("date", ""),
                     "likes": r.get("likes", 0),
                 }
-                for r in (reviews or [])[:8]
+                for r in (raw_reviews or [])[:8]
             ],
             "photos": [
                 p.get("image", "")

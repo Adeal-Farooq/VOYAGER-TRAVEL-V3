@@ -195,20 +195,23 @@ class LLMAgent:
         except Exception:
             tips = []
 
+        if not context.get("rides") and not context.get("duration_min"):
+            return {"recommended_mode": "transit", "estimated_cost_min": None, "estimated_cost_max": None, "estimated_time_minutes": None, "safety_rating": None, "tips": tips, "current_issues": [], "rides": [], "fuel_cost": None}
+
         return {
             "recommended_mode": "cab" if context.get("rides") else "transit",
-            "estimated_cost_min": context["rides"][0]["fare"] if context.get("rides") else 100,
-            "estimated_cost_max": context["rides"][-1]["fare"] if context.get("rides") else 500,
-            "estimated_time_minutes": context.get("duration_min", 30),
-            "safety_rating": 8,
-            "tips": tips or ["Book cab for comfort", "Check traffic before starting"],
+            "estimated_cost_min": context["rides"][0]["fare"] if context.get("rides") else None,
+            "estimated_cost_max": context["rides"][-1]["fare"] if context.get("rides") else None,
+            "estimated_time_minutes": context.get("duration_min"),
+            "safety_rating": None,
+            "tips": tips,
             "current_issues": [],
             "rides": context.get("rides", []),
             "fuel_cost": context.get("fuel_cost"),
         }
 
     async def get_live_prices(self, source: str, dest: str, mode: str = "cab") -> list[dict]:
-        """Get real ride prices."""
+        """Get real ride prices by resolving names to coordinates."""
         src_coords = await geocode(source)
         dst_coords = await geocode(dest)
         if src_coords and dst_coords:
@@ -218,19 +221,31 @@ class LLMAgent:
             )
         return []
 
-    async def get_weather_impact(self, location: str = "Bengaluru") -> dict:
-        """Get real weather data."""
-        weather_info = await weather_client.get_weather_impact(12.9716, 77.5946)
-        if weather_info:
+    async def estimate_ride_prices_coords(self, src_lat: float, src_lng: float,
+                                           dst_lat: float, dst_lng: float) -> list[dict]:
+        """Get ride prices using direct coordinates (skip geocoding)."""
+        return await google_maps_client.estimate_ride_prices(
+            src_lat, src_lng,
+            dst_lat, dst_lng,
+        )
+
+    async def get_weather_impact(self, location: str = "Bengaluru", lat: float = None, lng: float = None) -> dict:
+        """Get real weather data for specific coordinates. Returns floats, not strings."""
+        wlat = lat or 12.9716
+        wlng = lng or 77.5946
+        weather_info = await weather_client.get_weather_impact(wlat, wlng)
+        if weather_info and weather_info.get("condition") != "Unknown":
+            surge = weather_info.get("surge_multiplier", 0)
             return {
                 "condition": weather_info.get("condition", "clear"),
-                "temperature_celsius": str(weather_info.get("temperature", "28")),
-                "humidity": str(weather_info.get("humidity", "50")),
-                "impact": "moderate" if weather_info.get("surge_multiplier", 0) > 0 else "minor",
+                "temperature_celsius": weather_info.get("temperature"),
+                "humidity": weather_info.get("humidity"),
+                "impact": "moderate" if surge > 0 else "minor",
                 "recommendation": weather_info.get("advisory", "Good for travel"),
-                "rain_probability": weather_info.get("surge_multiplier", 0) * 100,
+                "rain_probability": weather_info.get("rain_probability", surge * 100),
+                "surge_multiplier": surge,
             }
-        return {"condition": "clear", "temperature_celsius": "28", "impact": "minor", "recommendation": "Good for travel"}
+        return {}
 
     async def get_current_events(self, location: str = "Bengaluru") -> str:
         """Get current events via news scraper."""
@@ -241,15 +256,9 @@ class LLMAgent:
         return "No current event data."
 
     async def get_travel_news(self, source: str = None, dest: str = None) -> list[dict]:
-        """Get travel news from real sources."""
+        """Get travel news from real sources. Never returns hardcoded data."""
         news = await get_travel_news(source, dest, limit=5)
-        if not news:
-            return [
-                {"title": "Bengaluru Traffic Advisory", "description": "Peak hour traffic expected on MG Road and Outer Ring Road.", "impact": "negative", "source": "alert", "timestamp": "Today", "lat": 12.9716, "lng": 77.5946},
-                {"title": "Metro Running on Schedule", "description": "Namma Metro Purple & Green lines operating normally.", "impact": "positive", "source": "alert", "timestamp": "Just now", "lat": 12.9767, "lng": 77.5713},
-                {"title": "Weather Update", "description": "Pleasant weather for travel today.", "impact": "positive", "source": "web", "timestamp": "Today", "lat": 12.9716, "lng": 77.5946},
-            ]
-        return news
+        return news or []
 
     async def get_real_reviews(self, name: str, address: str = None) -> dict | None:
         """Get real reviews from SerpAPI, Reddit, JustDial."""
@@ -277,8 +286,8 @@ class LLMAgent:
         prompt = f"{ctx_str}\nUser: {user_message}\nAssistant:" if ctx_str else f"User: {user_message}\nAssistant:"
         try:
             return await self._call_llm(system, prompt, json_mode=False)
-        except Exception:
-            return "I'm having trouble processing that request."
+        except Exception as e:
+            return f"Unable to get AI response: {str(e)}"
 
     async def get_hotel_prices(self, name: str, city: str = "Bengaluru") -> dict:
         """Get real hotel prices."""

@@ -1,6 +1,9 @@
+import logging
 import httpx
 import random
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 SUB_REDDITS = ["bangalore", "bengaluru", "indiantravel", "india", "bmtc", "IndianAutos"]
@@ -52,7 +55,8 @@ class RedditClient:
                 data = resp.json()
                 posts = data.get("data", {}).get("children", [])
                 return await self._enrich_posts(posts, limit)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Reddit search failed for '{query}': {e}")
                 return await self._search_across_subreddits(query, limit)
 
     async def _search_across_subreddits(
@@ -73,7 +77,8 @@ class RedditClient:
                         posts = data.get("data", {}).get("children", [])
                         enriched = await self._enrich_posts(posts, 2)
                         all_results.extend(enriched)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Reddit subreddit search failed for '{query}' in r/{sub}: {e}")
                     continue
         return all_results[:limit]
 
@@ -107,7 +112,8 @@ class RedditClient:
                             "author": pdata.get("author", ""),
                         })
                     return results
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Reddit news fetch failed for '{query}': {e}")
                 return []
 
     async def get_travel_insights(
@@ -167,8 +173,8 @@ class RedditClient:
                                             "author": cdata.get("author", ""),
                                         })
                                 entry["top_comments"] = top_comments
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Reddit comment fetch failed for {permalink}: {e}")
             results.append(entry)
         return results
 

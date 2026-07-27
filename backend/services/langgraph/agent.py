@@ -5,8 +5,11 @@ in a proper reasoning loop, instead of the current fake wrappers.
 """
 
 import json
+import logging
 from typing import Literal
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Tool imports
 from backend.services.langgraph.tools.search_tools import search_places, search_nearby, get_suggestions
@@ -162,6 +165,7 @@ class VoyagerLangGraph:
                     elif resp.status_code == 401:
                         raise Exception("Invalid OpenRouter API key")
             except Exception as e:
+                logger.warning(f"LLM call failed with {model}: {e}")
                 self.error = str(e)[:100]
                 continue
 
@@ -189,8 +193,8 @@ class VoyagerLangGraph:
                     for c in data[:3]
                     if isinstance(c, dict) and c.get("tool", "") in available_tools
                 ]
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(f"Failed to parse LLM tool calls: {e}")
         return []
 
     async def run(
@@ -271,8 +275,10 @@ Rules:
             result = await fn(**args)
             state.tool_results[name] = result
         except TypeError as e:
+            logger.warning(f"Tool {name} invalid args: {e}")
             state.tool_results[name] = {"error": f"Invalid args: {e}"}
         except Exception as e:
+            logger.warning(f"Tool {name} failed: {e}")
             state.tool_results[name] = {"error": str(e)[:200]}
 
     async def _auto_generate_calls(self, query: str, available_tools: list[str]) -> list[dict]:
