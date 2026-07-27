@@ -577,81 +577,6 @@ async def get_segment_step(
                 res_idx += 1
     return _sanitize({"status": "success", "step": step})
 
-@router.get("/complete-journey")
-async def get_complete_journey(
-    from_lat: float = Query(...), from_lng: float = Query(...),
-    from_name: str = Query("Your Location"),
-    dest_lat: float = Query(...), dest_lng: float = Query(...),
-    dest_name: str = Query("Destination"),
-    group_size: int = Query(1), budget: float = Query(None),
-):
-    result = transit_service.get_complete_journey_segments(
-        from_lat, from_lng, from_name,
-        dest_lat, dest_lng, dest_name,
-        group_size, budget
-    )
-    # Add OSRM paths for all segments' transport options
-    tasks = []
-    for seg in result.get("segments", []):
-        for dopt in seg.get("destination_options", []):
-            for tropt in dopt.get("transport_options", []):
-                fl, fn = tropt.get("from_lat"), tropt.get("from_lng")
-                tl, tn = tropt.get("to_lat"), tropt.get("to_lng")
-                if fl and fn and tl and tn:
-                    profile = "driving" if tropt.get("mode") in ("cab","cab_xl","cab_women","cab_pet","auto","bike") else "walking"
-                    tasks.append(transit_service.get_osrm_path_between(fl, fn, tl, tn, profile))
-                else:
-                    tasks.append(None)
-                tropt["_path_idx"] = len(tasks) - 1
-        for ns in seg.get("next_segments", []):
-            for dopt2 in ns.get("destination_options", []):
-                for tropt2 in dopt2.get("transport_options", []):
-                    fl, fn = tropt2.get("from_lat"), tropt2.get("from_lng")
-                    tl, tn = tropt2.get("to_lat"), tropt2.get("to_lng")
-                    if fl and fn and tl and tn:
-                        profile = "driving" if tropt2.get("mode") in ("cab","cab_xl","cab_women","cab_pet","auto","bike") else "walking"
-                        tasks.append(transit_service.get_osrm_path_between(fl, fn, tl, tn, profile))
-                    else:
-                        tasks.append(None)
-                    tropt2["_path_idx"] = len(tasks) - 1
-            for ns_dopt in ns.get("direct_options", []):
-                fl, fn = ns_dopt.get("from_lat"), ns_dopt.get("from_lng")
-                tl, tn = ns_dopt.get("to_lat"), ns_dopt.get("to_lng")
-                if fl and fn and tl and tn:
-                    profile = "walking" if ns_dopt.get("mode") == "walk" else "driving"
-                    tasks.append(transit_service.get_osrm_path_between(fl, fn, tl, tn, profile))
-                else:
-                    tasks.append(None)
-                ns_dopt["_path_idx"] = len(tasks) - 1
-    results = await asyncio.gather(*[t for t in tasks if t], return_exceptions=True)
-    res_idx = 0
-    for seg in result.get("segments", []):
-        for dopt in seg.get("destination_options", []):
-            for tropt in dopt.get("transport_options", []):
-                pi = tropt.pop("_path_idx", None)
-                if pi is not None:
-                    r = results[res_idx] if res_idx < len(results) else None
-                    if r and not isinstance(r, Exception) and r:
-                        tropt["path"] = r
-                    res_idx += 1
-        for ns in seg.get("next_segments", []):
-            for dopt2 in ns.get("destination_options", []):
-                for tropt2 in dopt2.get("transport_options", []):
-                    pi = tropt2.pop("_path_idx", None)
-                    if pi is not None:
-                        r = results[res_idx] if res_idx < len(results) else None
-                        if r and not isinstance(r, Exception) and r:
-                            tropt2["path"] = r
-                        res_idx += 1
-            for ns_dopt in ns.get("direct_options", []):
-                pi = ns_dopt.pop("_path_idx", None)
-                if pi is not None:
-                    r = results[res_idx] if res_idx < len(results) else None
-                    if r and not isinstance(r, Exception) and r:
-                        ns_dopt["path"] = r
-                    res_idx += 1
-    return _sanitize({"status": "success", "journey": result})
-
 @router.get("/news")
 async def get_travel_news(
     source_lat: float = Query(None),
@@ -677,6 +602,7 @@ _ROAD_ORDER = ["motorway", "trunk", "primary", "secondary", "tertiary", "residen
 
 _traffic_speed_cache = None
 _last_speed_load = 0
+_road_geojson_cache = None
 
 def _get_current_speed():
     """Realistic speed model based on time-of-day instead of synthetic CSV."""

@@ -1373,10 +1373,10 @@ class TripSegmentBuilder:
                     if 0.05 < ardist <= 50:
                         nk = f"{round(tlat,4)},{round(tlng,4)}"
                         stop_name = topt.get("to", "")
-                if nk not in visited_pts and nk not in next_from_map and self._is_hub_or_close_to_dest(tlat, tlng, dest_lat, dest_lng, stop_name):
-                    if len(next_from_map) < 3:  # Limit to 3 parallel next segments
-                        next_from_map[nk] = (tlat, tlng, stop_name)
-                        topt["needs_next_segment"] = True
+                        if nk not in visited_pts and nk not in next_from_map and self._is_hub_or_close_to_dest(tlat, tlng, dest_lat, dest_lng, stop_name):
+                            if len(next_from_map) < 3:  # Limit to 3 parallel next segments
+                                next_from_map[nk] = (tlat, tlng, stop_name)
+                                topt["needs_next_segment"] = True
 
         depth = 1
         logger.info(f"  next_from_map has {len(next_from_map)} entries for depth={depth}")

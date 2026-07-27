@@ -1,5 +1,8 @@
 import asyncio
+import logging
 from fastapi import APIRouter, Query
+
+logger = logging.getLogger(__name__)
 from backend.services.geocoding import geocoding_service
 from backend.agents.llm_agent import llm_agent
 from backend.services.langgraph.tools.review_tools import get_place_reviews
