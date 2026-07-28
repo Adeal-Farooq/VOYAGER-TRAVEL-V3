@@ -3,7 +3,7 @@ import type { AllSegment, SegmentDestination, TransitOption, SegmentStepOption }
 import { getModeIconName, formatDuration, formatRupees, getScoreColor } from '../utils/helpers'
 
 interface RoutePath {
-  legs: { from: string; to: string; mode: string; route_number: string; distance_km: number; duration_minutes: number; fare: number; departure_times?: string[]; shape_path?: number[][] }[]
+  legs: { from: string; to: string; mode: string; route_number: string; distance_km: number; duration_minutes: number; fare: number; departure_times?: string[]; shape_path?: number[][]; is_running?: boolean; time_status?: string }[]
   total_fare: number
   total_duration_minutes: number
   total_distance_km: number
@@ -391,18 +391,54 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
                 Choose transit from {selectedDest.stop.name}:
               </div>
 
+              {/* Time-of-day safety advisory */}
+              {(() => {
+                const period = (window as any).__TIME_PERIOD__ || (new Date().getHours() >= 22 || new Date().getHours() < 1 ? 'late_night' : new Date().getHours() < 6 ? 'early_morning' : 'daytime')
+                if (period === 'late_night') {
+                  return (
+                    <div style={{
+                      padding: '8px 12px', marginBottom: 8, fontSize: 11,
+                      borderRadius: 'var(--radius-md)',
+                      background: 'rgba(251, 191, 36, 0.15)',
+                      border: '1px solid rgba(251, 191, 36, 0.3)',
+                      color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f59e0b' }}>dark_mode</span>
+                      <span>It's late — cab/auto is safest right now. Buses may be limited or not running.</span>
+                    </div>
+                  )
+                }
+                if (period === 'early_morning') {
+                  return (
+                    <div style={{
+                      padding: '8px 12px', marginBottom: 8, fontSize: 11,
+                      borderRadius: 'var(--radius-md)',
+                      background: 'rgba(96, 165, 250, 0.15)',
+                      border: '1px solid rgba(96, 165, 250, 0.3)',
+                      color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#60a5fa' }}>wb_twilight</span>
+                      <span>Early morning — bus service may be limited. Cabs are reliable at this hour.</span>
+                    </div>
+                  )
+                }
+                return null
+              })()}
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {selectedDest.transit_options.slice(0, 8).map((to, ti) => {
                   const isSelectedTransit = selectedTransit?.route_number === to.route_number && selectedTransit?.to === to.to
+                  const isBusNotRunning = to.is_running === false
                   return (
                     <div key={ti}
                       onClick={() => handleSelectTransit(to)}
                       className="scale-in"
                       style={{
                         borderRadius: 'var(--radius-md)',
-                        border: `2px solid ${isSelectedTransit ? 'var(--primary)' : 'var(--outline-variant)'}`,
-                        background: isSelectedTransit ? 'var(--primary-container)' : 'var(--surface-container)',
+                        border: `2px solid ${isSelectedTransit ? 'var(--primary)' : isBusNotRunning ? 'rgba(239, 68, 68, 0.3)' : 'var(--outline-variant)'}`,
+                        background: isSelectedTransit ? 'var(--primary-container)' : isBusNotRunning ? 'rgba(239, 68, 68, 0.05)' : 'var(--surface-container)',
                         cursor: 'pointer', overflow: 'hidden',
+                        opacity: isBusNotRunning ? 0.7 : 1,
                       }}>
                       <div style={{ padding: '10px 12px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -438,8 +474,36 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
                           </div>
                         </div>
 
+                        {/* Time status badge */}
+                        {to.is_running === false && to.time_status && (
+                          <div style={{
+                            marginTop: 6, padding: '4px 8px', fontSize: 10,
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                            color: '#ef4444',
+                            display: 'flex', alignItems: 'center', gap: 4,
+                          }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>schedule</span>
+                            <span>{to.time_status}</span>
+                          </div>
+                        )}
+                        {to.is_running !== false && to.time_status && (
+                          <div style={{
+                            marginTop: 6, padding: '4px 8px', fontSize: 10,
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(34, 197, 94, 0.1)',
+                            border: '1px solid rgba(34, 197, 94, 0.2)',
+                            color: '#22c55e',
+                            display: 'flex', alignItems: 'center', gap: 4,
+                          }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>check_circle</span>
+                            <span>{to.time_status}</span>
+                          </div>
+                        )}
+
                         {/* Bus times */}
-                        {to.bus_times && to.bus_times.length > 0 && (
+                        {to.bus_times && to.bus_times.length > 0 && !isBusNotRunning && (
                           <div style={{
                             display: 'flex', gap: 4, marginTop: 6,
                             flexWrap: 'wrap',
@@ -460,6 +524,35 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
                                 +{to.bus_times.length - 6} more
                               </span>
                             )}
+                          </div>
+                        )}
+
+                        {/* Fallback alternatives when bus not running */}
+                        {isBusNotRunning && to.alternative_options && to.alternative_options.length > 0 && (
+                          <div style={{
+                            marginTop: 6, padding: '6px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(251, 191, 36, 0.1)',
+                            border: '1px solid rgba(251, 191, 36, 0.2)',
+                            fontSize: 11,
+                          }}>
+                            <div style={{ fontWeight: 500, color: '#f59e0b', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>lightbulb</span>
+                              Based on the current time, here's what we recommend instead:
+                            </div>
+                            {to.alternative_options.slice(0, 3).map((alt, ai) => (
+                              <div key={ai} style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                padding: '2px 0', fontSize: 11, color: 'var(--text)',
+                              }}>
+                                <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                  {alt.mode === 'walk' ? 'directions_walk' : alt.mode === 'auto' ? 'pedal_bike' : 'local_taxi'}
+                                </span>
+                                <span>{alt.label || getModeLabel(alt.mode)}</span>
+                                <span>· {formatDuration(alt.duration_minutes)}</span>
+                                {alt.fare > 0 && <span>· {formatRupees(alt.fare)}</span>}
+                              </div>
+                            ))}
                           </div>
                         )}
 
@@ -548,6 +641,26 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
           {/* Route paths suggestions */}
           {stepState === 'pick_dest' && currentSeg.route_paths && currentSeg.route_paths.length > 0 && (
             <div style={{ marginTop: 14 }}>
+              {(() => {
+                const h = new Date().getHours()
+                const hasLateRoutes = currentSeg.route_paths?.some(rp => rp.legs?.some(l => l.is_running === false))
+                const isLate = h >= 22 || h < 1
+                if (isLate || hasLateRoutes) {
+                  return (
+                    <div style={{
+                      padding: '6px 10px', marginBottom: 8, fontSize: 10,
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'rgba(251, 191, 36, 0.12)',
+                      border: '1px solid rgba(251, 191, 36, 0.25)',
+                      color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 4,
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 12, color: '#f59e0b' }}>info</span>
+                      <span>Some bus routes may not be running at this hour — check individual options for details.</span>
+                    </div>
+                  )
+                }
+                return null
+              })()}
               <div style={{
                 fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
                 textTransform: 'uppercase', marginBottom: 6,
@@ -578,20 +691,29 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
                       </span>
                     </div>
                     <div style={{ padding: '6px 10px' }}>
-                      {rp.legs.map((leg, li) => (
+                      {rp.legs.map((leg, li) => {
+                        const legNotRunning = leg.is_running === false
+                        return (
                         <div key={li} style={{
                           display: 'flex', alignItems: 'center', gap: 4,
                           padding: '3px 0', fontSize: 11,
+                          opacity: legNotRunning ? 0.5 : 1,
                         }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                            {leg.mode === 'walk' ? 'directions_walk' : leg.mode === 'metro' ? 'subway' : 'directions_bus'}
-                          </span>
-                          <span style={{ fontWeight: 500 }}>{leg.route_number || getModeLabel(leg.mode)}</span>
+                          {legNotRunning ? (
+                            <span className="material-symbols-outlined" style={{ fontSize: 12, color: '#ef4444' }}>block</span>
+                          ) : (
+                            <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                              {leg.mode === 'walk' ? 'directions_walk' : leg.mode === 'metro' ? 'subway' : 'directions_bus'}
+                            </span>
+                          )}
+                          <span style={{ fontWeight: 500, textDecoration: legNotRunning ? 'line-through' : 'none' }}>{leg.route_number || getModeLabel(leg.mode)}</span>
                           <span className="material-symbols-outlined" style={{ fontSize: 10, color: 'var(--text-muted)' }}>arrow_forward</span>
                           <span style={{ color: 'var(--text-muted)', flex: 1 }}>{leg.to}</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{leg.duration_minutes}min</span>
+                          <span style={{ color: legNotRunning ? '#ef4444' : 'var(--text-muted)', fontSize: 10 }}>
+                            {legNotRunning ? 'Not running' : `${leg.duration_minutes}min`}
+                          </span>
                         </div>
-                      ))}
+                      )})}
                       <div style={{
                         display: 'flex', gap: 8, fontSize: 10,
                         color: 'var(--text-muted)', marginTop: 4,

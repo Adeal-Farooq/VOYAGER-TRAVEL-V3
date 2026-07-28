@@ -80,13 +80,23 @@ class GeocodingService:
         center_lat = lat or 12.9716
         center_lng = lng or 77.5946
 
+        max_dist = 50
+        if is_blr:
+            max_dist = 15
+        query_words = set(query.lower().split())
         for r in osm_results:
             key = (round(r["lat"], 4), round(r["lng"], 4))
             if key not in seen_coords:
                 seen_coords.add(key)
                 r["distance_km"] = round(geodesic((center_lat, center_lng), (r["lat"], r["lng"])).km, 2)
-                if not is_blr or r["distance_km"] <= 50:
-                    results.append(r)
+                if r["distance_km"] > max_dist:
+                    continue
+                r_name_words = set(r.get("name", "").lower().split())
+                r_addr_words = set(r.get("address", "").lower().split())
+                overlap = query_words & (r_name_words | r_addr_words)
+                if len(overlap) < max(1, len(query_words) * 0.4):
+                    continue
+                results.append(r)
 
         query_lower = query.lower().strip()
         for stop_id, stop in db.bus_stops.items():
@@ -383,12 +393,15 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
 
                 async def enrich_place(r: dict):
                     async with sem:
-                        # Real reviews via LangChain (includes SerpAPI photos)
                         try:
                             web_reviews = await llm_agent.get_real_reviews(r["name"], r.get("address"))
                             if web_reviews:
-                                if web_reviews.get("rating"): r["rating"] = float(web_reviews["rating"])
-                                if web_reviews.get("reliability_score"): r["reliability_score"] = float(web_reviews["reliability_score"])
+                                if web_reviews.get("rating"):
+                                    r["rating"] = float(web_reviews["rating"])
+                                # Always compute reliability_score from enriched rating — never trust
+                                # external reliability_score which may use different formulas
+                                r_rating = r.get("rating", 4.0) or 4.0
+                                r["reliability_score"] = _score_from_rating(r_rating)
                                 if web_reviews.get("review_summary"): r["review_summary"] = web_reviews["review_summary"]
                                 if web_reviews.get("is_recommended") is not None: r["is_recommended"] = bool(web_reviews["is_recommended"])
                                 if web_reviews.get("reviews"): r["reviews"] = web_reviews.get("reviews", [])[:4]
@@ -425,7 +438,8 @@ Return a JSON array of objects with EXACT keys: name, place_type (one of: mall/h
         for r in results:
             r3_rating = r.get("rating", 4.0) or 4.0
             r.setdefault("rating", 4.0)
-            r.setdefault("reliability_score", _score_from_rating(r3_rating))
+            # Always overwrite reliability_score to be derived from rating — never stale
+            r["reliability_score"] = _score_from_rating(r.get("rating", r3_rating) or 4.0)
             r.setdefault("review_summary", "")
             r.setdefault("is_recommended", r.get("reliability_score", 0.6) > 0.6)
             r.setdefault("address", f"{r['name']}, Bengaluru")

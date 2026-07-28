@@ -4,6 +4,8 @@ import L from 'leaflet'
 import type { PlaceResult, MapRouteGeometry, NewsItem } from '../types'
 import { getPlaceIconName, getScoreLabel, getScoreColor } from '../utils/helpers'
 
+const MARKER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16']
+
 interface MapViewProps {
   mapRef: React.MutableRefObject<any>
   center: [number, number]
@@ -20,6 +22,8 @@ interface MapViewProps {
   newsItems: NewsItem[]
   searchCenter?: [number, number] | null
   searchRadius?: number
+  numberedMarkers?: boolean
+  highlightPlace?: PlaceResult | null
 }
 
 function MapController({ mapRef, onCenterChange, center }: {
@@ -66,6 +70,40 @@ function createPinHtml(place: PlaceResult): string {
   </div>`
 }
 
+function NumberedMarker({ place, num, color, onClick }: { place: PlaceResult; num: number; color: string; onClick?: (p: PlaceResult) => void }) {
+  return (
+    <Marker position={[place.lat, place.lng]}
+      icon={L.divIcon({
+        className: '', html: `<div style="position:relative;width:36px;height:36px;">
+          <div style="position:absolute;top:0;left:0;width:36px;height:36px;border-radius:50%;background:${color};border:2.5px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-size:14px;font-weight:700;color:white;cursor:pointer;">
+            <span style="font-variation-settings:'FILL'1">${num}</span>
+          </div>
+        </div>`, iconSize: [36, 36], iconAnchor: [18, 18],
+      })}
+      eventHandlers={{ click: () => onClick?.(place) }}>
+      <Popup><div style={{ fontWeight: 600, fontSize: 14 }}>{place.name}</div></Popup>
+    </Marker>
+  )
+}
+
+function HighlightedMarker({ place }: { place: PlaceResult }) {
+  const score = place.reliability_score || 0.5
+  const color = getScoreColor(score * 100)
+  return (
+    <Marker position={[place.lat, place.lng]}
+      icon={L.divIcon({
+        className: '', html: `<div style="position:relative;width:44px;height:44px;">
+          <div style="position:absolute;top:2px;left:2px;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,0.08);animation:pulse-ring 1.5s cubic-bezier(0.4,0,0.6,1) infinite;"></div>
+          <div style="position:absolute;top:0;left:0;width:44px;height:44px;border-radius:50%;background:${color};border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 14px rgba(0,0,0,0.35);font-size:18px;color:white;cursor:pointer;">
+            <span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'wght'600,'FILL'1">star</span>
+          </div>
+        </div>`, iconSize: [44, 44], iconAnchor: [22, 22],
+      })}>
+      <Popup>{place.name}</Popup>
+    </Marker>
+  )
+}
+
 function PlaceMarker({ place, onClick }: { place: PlaceResult; onClick?: (p: PlaceResult) => void }) {
   const score = place.reliability_score || 0.5
   return (
@@ -108,6 +146,7 @@ export default function MapView({
   routeGeometry, sourceLocation, destLocation,
   liveTrackingPos, trackingActive, newsItems,
   searchCenter, searchRadius,
+  numberedMarkers, highlightPlace,
 }: MapViewProps) {
 
   return (
@@ -126,11 +165,17 @@ export default function MapView({
         <SearchRadiusCircle center={searchCenter} radiusKm={searchRadius} />
       )}
 
-      {allMarkers.map((place, i) => (
+      {numberedMarkers ? allMarkers.map((place, i) => {
+        const isHighlighted = highlightPlace && place.name === highlightPlace.name && Math.abs(place.lat - highlightPlace.lat) < 0.001
+        if (isHighlighted) return null // rendered separately below
+        return <NumberedMarker key={i} place={place} num={i + 1} color={MARKER_COLORS[i % MARKER_COLORS.length]} onClick={onMarkerClick} />
+      }) : allMarkers.map((place, i) => (
         <PlaceMarker key={i} place={place} onClick={onMarkerClick} />
       ))}
 
-      {selectedPlace && !allMarkers.some(m => m.name === selectedPlace.name && m.lat === selectedPlace.lat) && (
+      {highlightPlace && numberedMarkers && <HighlightedMarker place={highlightPlace} />}
+
+      {!numberedMarkers && selectedPlace && !allMarkers.some(m => m.name === selectedPlace.name && m.lat === selectedPlace.lat) && (
         <Marker position={[selectedPlace.lat, selectedPlace.lng]} icon={L.divIcon({
           className: '', html: `<div style="width:36px;height:36px;border-radius:50%;background:#8b5cf6;border:3px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(139,92,246,0.5);font-size:18px;color:white;animation:pulse-ring 2s cubic-bezier(0.4,0,0.6,1) infinite;"><span class="material-symbols-outlined" style="font-size:18px;font-variation-settings:'FILL'1">star</span></div>`,
           iconSize: [36, 36], iconAnchor: [18, 18],
