@@ -21,6 +21,7 @@ export default function MainPage() {
     routeGeometry, setRouteGeometry,
     newsItems, setNewsItems,
     openDiscovery, showDiscovery, discoveryPlace,
+    searchCenter, searchRadius,
   } = useApp()
 
   const [enrichingName, setEnrichingName] = useState<string | null>(null)
@@ -33,22 +34,27 @@ export default function MainPage() {
 
   const handleViewDetails = useCallback(async (place: PlaceResult) => {
     setEnrichingName(place.name)
+    setSelectedPlace(place)
+    setMapCenter([place.lat, place.lng])
+    if (mapRef.current) mapRef.current.flyTo([place.lat, place.lng], 16, { duration: 0.8 })
     try {
       const enriched = await enrichPlace(place)
       if (enriched?.status === 'success' && enriched.place) {
         const fullPlace = { ...place, ...enriched.place }
         setSelectedPlace(fullPlace)
         openDiscovery(fullPlace)
+        // Propagate enriched data back to markers so list card also reflects real rating
+        setAllMarkers(allMarkers.map(p =>
+          p.name === fullPlace.name && Math.abs(p.lat - fullPlace.lat) < 0.001 ? fullPlace : p
+        ))
       } else {
-        setSelectedPlace(place)
         openDiscovery(place)
       }
     } catch {
-      setSelectedPlace(place)
       openDiscovery(place)
     }
     setEnrichingName(null)
-  }, [setSelectedPlace, openDiscovery])
+  }, [setSelectedPlace, openDiscovery, setMapCenter, mapRef, setAllMarkers])
 
   const {
     setSourceLocation: setSrcLoc,
@@ -105,7 +111,12 @@ export default function MainPage() {
         <div style={{ flex: 1, overflowY: 'auto', padding: mode === 'search' ? 0 : '14px 16px' }}>
           {mode === 'search' && (
             <SearchPanel
-              onSelectPlace={(place) => { setSelectedPlace(place); handleViewOnMap(place) }}
+              onSelectPlace={(place) => {
+                setSelectedPlace(place)
+                setDstLoc([place.lat, place.lng])
+                setDstQ(place.name)
+                handleViewOnMap(place)
+              }}
               onViewOnMap={handleViewOnMap}
               onViewDetails={handleViewDetails}
               onNavigateToPlace={handleNavigateToPlace}
@@ -144,6 +155,10 @@ export default function MainPage() {
           liveTrackingPos={liveTrackingPos}
           trackingActive={trackingActive}
           newsItems={newsItems}
+          searchCenter={searchCenter}
+          searchRadius={searchRadius}
+          numberedMarkers={!!searchCenter}
+          highlightPlace={discoveryPlace || selectedPlace}
         />
 
         {showDiscovery && discoveryPlace && mode === 'search' && (

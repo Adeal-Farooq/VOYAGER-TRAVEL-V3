@@ -144,4 +144,21 @@ export async function getAllSegments(
 }
 
 
+export async function extendSegment(
+  fromLat: number, fromLng: number, fromName: string,
+  destLat: number, destLng: number, destName: string,
+  groupSize: number = 1, budget?: number, segmentIndex: number = 0,
+  arrivalSeconds?: number
+): Promise<{ status: string; segment: any }> {
+  const params: any = {
+    from_lat: fromLat, from_lng: fromLng, from_name: fromName,
+    dest_lat: destLat, dest_lng: destLng, dest_name: destName,
+    group_size: groupSize, segment_index: segmentIndex,
+  }
+  if (budget !== undefined) params.budget = budget
+  if (arrivalSeconds !== undefined) params.arrival_seconds = arrivalSeconds
+  const { data } = await api.get('/routes/extend-segment', { params, timeout: 35000 })
+  return data
+}
+
 export default api

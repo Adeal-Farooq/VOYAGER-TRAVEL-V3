@@ -492,13 +492,6 @@ async def get_all_segments(
                 for fopt in opt.get("final_options", []):
                     if not fopt.get("path") and fopt.get("from_lat") and fopt.get("to_lat"):
                         fopt["path"] = transit_service._interpolate_path(fopt["from_lat"], fopt["from_lng"], fopt["to_lat"], fopt["to_lng"], 6)
-    # Strip internal keys from response
-    def _strip_internal(segments):
-        for seg in segments:
-            for dest in seg.get("destinations", []):
-                for topt in dest.get("transit_options", []):
-                    topt.pop("needs_next_segment", None)
-    _strip_internal(result.get("segments", []))
     return _sanitize({
         "status": "success",
         "data": {
@@ -577,6 +570,29 @@ async def get_segment_step(
                 res_idx += 1
     return _sanitize({"status": "success", "step": step})
 
+@router.get("/extend-segment")
+async def extend_segment(
+    from_lat: float = Query(...), from_lng: float = Query(...),
+    from_name: str = Query("Your Location"),
+    dest_lat: float = Query(...), dest_lng: float = Query(...),
+    dest_name: str = Query("Destination"),
+    group_size: int = Query(1), budget: float = Query(None),
+    segment_index: int = Query(0),
+    arrival_seconds: int = Query(None),
+):
+    loop = asyncio.get_running_loop()
+    try:
+        seg = await asyncio.wait_for(
+            loop.run_in_executor(None, transit_service.get_single_segment,
+                from_lat, from_lng, from_name,
+                dest_lat, dest_lng, dest_name,
+                group_size, budget, segment_index, arrival_seconds),
+            timeout=30.0
+        )
+        return _sanitize({"status": "success", "segment": seg})
+    except asyncio.TimeoutError:
+        return _sanitize({"status": "error", "segment": None})
+
 @router.get("/news")
 async def get_travel_news(
     source_lat: float = Query(None),
@@ -602,6 +618,7 @@ _ROAD_ORDER = ["motorway", "trunk", "primary", "secondary", "tertiary", "residen
 
 _traffic_speed_cache = None
 _last_speed_load = 0
+_road_geojson_cache = None
 
 def _get_current_speed():
     """Realistic speed model based on time-of-day instead of synthetic CSV."""

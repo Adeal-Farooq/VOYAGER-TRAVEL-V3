@@ -15,6 +15,22 @@ class TransitPathService:
         self._path_cache = {}
 
     def interpolate_path(self, slat, slng, dlat, dlng, num_points=12):
+        # Try OSRM foot for walkable distances first (real road paths)
+        if num_points < 8 and _haversine_dist(slat, slng, dlat, dlng) <= 3.0:
+            try:
+                osrm_url = getattr(settings, 'OSRM_FOOT_URL', 'http://localhost:5001')
+                import httpx
+                with httpx.Client(timeout=1.5) as client:
+                    url = f"{osrm_url}/route/v1/foot/{slng},{slat};{dlng},{dlat}?overview=full&geometries=geojson"
+                    resp = client.get(url)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("code") == "Ok" and data.get("routes"):
+                            coords = data["routes"][0]["geometry"]["coordinates"]
+                            path = [[round(c[1], 6), round(c[0], 6)] for c in coords]
+                            return path
+            except Exception:
+                pass
         if num_points < 1:
             return [[round(slat, 6), round(slng, 6)]]
         points = []

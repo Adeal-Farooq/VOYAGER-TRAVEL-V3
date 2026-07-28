@@ -6,13 +6,14 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 from backend.services.clients.reddit_client import reddit_client
-from backend.services.scrapers.google_reviews_scraper import google_reviews_scraper
 
 _REVIEW_CACHE = {}
 _CACHE_TTL = 3600
+# Increment when reliability_score formula changes to invalidate all stale cache entries
+_CACHE_VERSION = 2
 
 def _cache_key(name, address):
-    return f"{name.lower().strip()}|{(address or '').lower().strip()}"
+    return f"{name.lower().strip()}|{(address or '').lower().strip()}|v{_CACHE_VERSION}"
 
 def _get_cached(key):
     entry = _REVIEW_CACHE.get(key)
@@ -50,7 +51,7 @@ async def get_place_reviews(name: str, address: str = None) -> dict | None:
                                 "photos": detail.get("photos", []),
                                 "source": "google_maps",
                                 "is_recommended": detail.get("rating", 0) >= 3.5,
-                                "reliability_score": min(1.0, detail.get("review_count", 10) / 100) if detail.get("review_count") else 0.5,
+                                "reliability_score": round(min(detail.get("rating", 3.0) / 5, 1.0), 2),
                             }
                             _set_cache(ck, result)
                             return result
@@ -100,7 +101,7 @@ async def get_place_reviews(name: str, address: str = None) -> dict | None:
                                         "photos": photos,
                                         "source": "google_places_api",
                                         "is_recommended": rating >= 3.5 if rating else True,
-                                        "reliability_score": min(1.0, len(raw_reviews) / 10) if raw_reviews else 0.5,
+                                        "reliability_score": round(min(rating / 5, 1.0), 2) if rating else 0.5,
                                     }
                                     _set_cache(ck, result_data)
                                     return result_data
@@ -136,7 +137,7 @@ async def get_place_reviews(name: str, address: str = None) -> dict | None:
             "photos": [],
             "source": "mixed",
             "is_recommended": avg_rating >= 3.0,
-            "reliability_score": min(0.7, len(reviews_data) / 10),
+            "reliability_score": round(min(avg_rating / 5, 1.0), 2) if avg_rating else 0.5,
         }
         _set_cache(ck, result)
         return result

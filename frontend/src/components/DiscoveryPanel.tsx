@@ -117,7 +117,7 @@ export default function DiscoveryPanel({ place, onClose, onNavigate, onShowOnMap
                 background: 'var(--surface-container-low)',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                  <span style={{ fontWeight: 500, fontSize: 12 }}>{rv.author || rv.user}</span>
+                  <span style={{ fontWeight: 500, fontSize: 12 }}>{(rv as any).author || rv.user}</span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                     {'⭐'.repeat(Math.min(rv.rating || 3, 5))} {rv.date}
                   </span>

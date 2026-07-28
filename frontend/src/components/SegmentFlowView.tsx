@@ -1,9 +1,10 @@
 import { useState, useCallback, useMemo } from 'react'
 import type { AllSegment, SegmentDestination, TransitOption, SegmentStepOption } from '../types'
 import { getModeIconName, formatDuration, formatRupees, getScoreColor } from '../utils/helpers'
+import { extendSegment } from '../services/api'
 
 interface RoutePath {
-  legs: { from: string; to: string; mode: string; route_number: string; distance_km: number; duration_minutes: number; fare: number; departure_times?: string[]; shape_path?: number[][] }[]
+  legs: { from: string; to: string; mode: string; route_number: string; distance_km: number; duration_minutes: number; fare: number; departure_times?: string[]; shape_path?: number[][]; is_running?: boolean; time_status?: string }[]
   total_fare: number
   total_duration_minutes: number
   total_distance_km: number
@@ -15,18 +16,21 @@ interface SegmentFlowViewProps {
   segments: AllSegment[]
   sourceName: string
   destName: string
+  destLat?: number
+  destLng?: number
   onRouteGeometry: (geo: any) => void
 }
 
 type StepState = 'pick_dest' | 'pick_transit'
 
-export default function SegmentFlowView({ segments, sourceName, destName, onRouteGeometry }: SegmentFlowViewProps) {
+export default function SegmentFlowView({ segments, sourceName, destName, destLat, destLng, onRouteGeometry }: SegmentFlowViewProps) {
   const [activeSegIdx, setActiveSegIdx] = useState(0)
   const [selectedDest, setSelectedDest] = useState<SegmentDestination | null>(null)
   const [selectedTransit, setSelectedTransit] = useState<TransitOption | null>(null)
   const [stepState, setStepState] = useState<StepState>('pick_dest')
   const [chosenPath, setChosenPath] = useState<{ seg: number; dest: SegmentDestination; transit: TransitOption }[]>([])
   const [finished, setFinished] = useState(false)
+  const [extending, setExtending] = useState(false)
 
   const currentSeg = segments[activeSegIdx]
 
@@ -41,45 +45,140 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
     if (walkOpt?.path) {
       onRouteGeometry([{
         type: 'segment', color: 'var(--secondary)', weight: 3, dashArray: '8,4',
-        coordinates: walkOpt.path.map((c: any) => [c[1], c[0]]),
+        coordinates: walkOpt.path.map((c: any) => [c[0], c[1]]),
       }])
     }
   }, [onRouteGeometry])
 
   const handleSelectTransit = useCallback((transit: TransitOption) => {
     setSelectedTransit(transit)
+    const geo: any[] = []
+    // Reach path (walk/cab to stop)
+    if (selectedDest) {
+      const walkOpt = selectedDest.reach_options?.find(o => o.mode === 'walk')
+      if (walkOpt?.path) {
+        geo.push({
+          type: 'segment', color: 'var(--secondary)', weight: 3, dashArray: '8,4',
+          coordinates: walkOpt.path.map((c: any) => [c[0], c[1]]),
+        })
+      }
+    }
+    // Transit path
     if (transit.path) {
-      const coords = transit.path.map((c: any) => [c[1], c[0]])
-      const allCoords = [coords]
-      if (transit.next_transit) {
-        for (const nt of transit.next_transit) {
-          if (nt.path) allCoords.push(nt.path.map((c: any) => [c[1], c[0]]))
+      geo.push({
+        type: 'segment', color: 'var(--primary)', weight: 4,
+        coordinates: transit.path.map((c: any) => [c[0], c[1]]),
+      })
+    }
+    // Next_transit paths
+    if (transit.next_transit) {
+      for (const nt of transit.next_transit) {
+        if (nt.path) {
+          geo.push({
+            type: 'segment', color: '#f59e0b', weight: 3,
+            coordinates: nt.path.map((c: any) => [c[0], c[1]]),
+          })
         }
       }
-      onRouteGeometry(allCoords.map((c, i) => ({
-        type: 'segment', color: i === 0 ? 'var(--primary)' : '#f59e0b', weight: 4,
-        coordinates: c,
-      })))
     }
-  }, [onRouteGeometry])
+    // Final options paths (drop-off to destination)
+    if (transit.final_options) {
+      for (const fo of transit.final_options) {
+        if (fo.path) {
+          geo.push({
+            type: 'segment',
+            color: fo.mode === 'walk' ? 'var(--secondary)' : '#f97316',
+            weight: fo.mode === 'walk' ? 3 : 4,
+            dashArray: fo.mode === 'walk' ? '8,4' : undefined,
+            coordinates: fo.path.map((c: any) => [c[0], c[1]]),
+          })
+        }
+      }
+    }
+    onRouteGeometry(geo)
+  }, [onRouteGeometry, selectedDest])
 
-  const handleConfirmTransit = useCallback(() => {
+  const handleConfirmTransit = useCallback(async () => {
     if (!selectedDest || !selectedTransit) return
+    const transitEndsAtDest = !selectedTransit.arrives_at_stop && selectedTransit.mode === 'walk'
     const newPath = [...chosenPath, { seg: activeSegIdx, dest: selectedDest, transit: selectedTransit }]
     setChosenPath(newPath)
-    const nextIdx = selectedTransit.next_segment_index !== undefined && selectedTransit.next_segment_index !== null
+
+    // Check if there's a pre-computed next segment
+    let nextIdx = selectedTransit.next_segment_index !== undefined && selectedTransit.next_segment_index !== null
       ? selectedTransit.next_segment_index
       : (activeSegIdx + 1 < segments.length ? activeSegIdx + 1 : null)
-    if (nextIdx === null) {
+
+    // If no pre-computed next segment and transit arrives at a stop (not destination), try live extension
+    if (nextIdx === null && !transitEndsAtDest && selectedTransit.to_lat && selectedTransit.to_lng) {
+      setExtending(true)
+      try {
+        // Calculate arrival_seconds for time progression
+        const now = new Date()
+        let arrivalSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()
+        for (const step of newPath) {
+          if (step.transit.duration_minutes) arrivalSec += step.transit.duration_minutes * 60
+          if (step.dest.reach_options?.[0]?.duration_minutes) arrivalSec += step.dest.reach_options[0].duration_minutes * 60
+        }
+        const dl = destLat ?? segments[activeSegIdx]?.from?.lat
+        const dn = destLng ?? segments[activeSegIdx]?.from?.lng
+        const res = await extendSegment(
+          selectedTransit.to_lat, selectedTransit.to_lng, selectedTransit.to || 'Stop',
+          dl, dn, destName,
+          1, undefined, segments.length, arrivalSec
+        )
+        if (res?.status === 'success' && res?.segment) {
+          const newSegment = res.segment
+          newSegment.segment_index = segments.length
+          segments.push(newSegment)
+          nextIdx = segments.length - 1
+        }
+      } catch {
+      } finally {
+        setExtending(false)
+      }
+    }
+
+    // Show accumulated journey paths on map after each confirmation
+    const accGeo: any[] = []
+    for (const step of newPath) {
+      const walkOpt = step.dest.reach_options?.find(o => o.mode === 'walk')
+      if (walkOpt?.path) {
+        accGeo.push({ type: 'segment' as const, color: 'var(--secondary)', weight: 3, dashArray: '8,4' as const,
+          coordinates: walkOpt.path.map((c: any) => [c[0], c[1]]) })
+      }
+      if (step.transit.path) {
+        accGeo.push({ type: 'segment' as const, color: 'var(--primary)', weight: 4,
+          coordinates: step.transit.path.map((c: any) => [c[0], c[1]]) })
+      }
+      if (step.transit.next_transit) {
+        for (const nt of step.transit.next_transit) {
+          if (nt.path) {
+            accGeo.push({ type: 'segment' as const, color: '#f59e0b', weight: 3,
+              coordinates: nt.path.map((c: any) => [c[0], c[1]]) })
+          }
+        }
+      }
+      if (step.transit.final_options) {
+        for (const fo of step.transit.final_options) {
+          if (fo.path) {
+            accGeo.push({ type: 'segment' as const, color: '#f97316', weight: 4,
+              coordinates: fo.path.map((c: any) => [c[0], c[1]]) })
+          }
+        }
+      }
+    }
+    onRouteGeometry(accGeo)
+
+    if (nextIdx === null || transitEndsAtDest) {
       setFinished(true)
-      onRouteGeometry(null)
       return
     }
     setActiveSegIdx(nextIdx)
     setSelectedDest(null)
     setSelectedTransit(null)
     setStepState('pick_dest')
-  }, [selectedDest, selectedTransit, chosenPath, activeSegIdx, segments.length, onRouteGeometry])
+  }, [selectedDest, selectedTransit, chosenPath, activeSegIdx, segments, onRouteGeometry])
 
   const handleReset = useCallback(() => {
     setActiveSegIdx(0)
@@ -391,21 +490,58 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
                 Choose transit from {selectedDest.stop.name}:
               </div>
 
+              {/* Time-of-day safety advisory */}
+              {(() => {
+                const period = (window as any).__TIME_PERIOD__ || (new Date().getHours() >= 22 || new Date().getHours() < 1 ? 'late_night' : new Date().getHours() < 6 ? 'early_morning' : 'daytime')
+                if (period === 'late_night') {
+                  return (
+                    <div style={{
+                      padding: '8px 12px', marginBottom: 8, fontSize: 11,
+                      borderRadius: 'var(--radius-md)',
+                      background: 'rgba(251, 191, 36, 0.15)',
+                      border: '1px solid rgba(251, 191, 36, 0.3)',
+                      color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#f59e0b' }}>dark_mode</span>
+                      <span>It's late — cab/auto is safest right now. Buses may be limited or not running.</span>
+                    </div>
+                  )
+                }
+                if (period === 'early_morning') {
+                  return (
+                    <div style={{
+                      padding: '8px 12px', marginBottom: 8, fontSize: 11,
+                      borderRadius: 'var(--radius-md)',
+                      background: 'rgba(96, 165, 250, 0.15)',
+                      border: '1px solid rgba(96, 165, 250, 0.3)',
+                      color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: '#60a5fa' }}>wb_twilight</span>
+                      <span>Early morning — bus service may be limited. Cabs are reliable at this hour.</span>
+                    </div>
+                  )
+                }
+                return null
+              })()}
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {selectedDest.transit_options.slice(0, 8).map((to, ti) => {
                   const isSelectedTransit = selectedTransit?.route_number === to.route_number && selectedTransit?.to === to.to
+                  const isBusNotRunning = to.is_running === false
                   return (
                     <div key={ti}
                       onClick={() => handleSelectTransit(to)}
                       className="scale-in"
                       style={{
                         borderRadius: 'var(--radius-md)',
-                        border: `2px solid ${isSelectedTransit ? 'var(--primary)' : 'var(--outline-variant)'}`,
-                        background: isSelectedTransit ? 'var(--primary-container)' : 'var(--surface-container)',
+                        border: `2px solid ${isSelectedTransit ? 'var(--primary)' : isBusNotRunning ? 'rgba(239, 68, 68, 0.3)' : 'var(--outline-variant)'}`,
+                        background: isSelectedTransit ? 'var(--primary-container)' : isBusNotRunning ? 'rgba(239, 68, 68, 0.05)' : 'var(--surface-container)',
                         cursor: 'pointer', overflow: 'hidden',
+                        opacity: isBusNotRunning ? 0.7 : 1,
                       }}>
                       <div style={{ padding: '10px 12px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {/* Row 1: Mode icon + Route badge + Fare/Duration */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                           <span className="material-symbols-outlined" style={{
                             fontSize: 20, color: 'var(--primary)',
                             padding: 6, borderRadius: 'var(--radius-sm)',
@@ -415,51 +551,145 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
                              to.mode === 'metro' ? 'subway' :
                              to.mode === 'train' ? 'train' : 'directions_bus'}
                           </span>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 600, fontSize: 13 }}>
-                              {to.route_number ? `${to.route_number}` : getModeLabel(to.mode)}
-                              <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>
-                                → {to.to || 'towards destination'}
-                              </span>
-                            </div>
-                            <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                              <span>{formatDuration(to.duration_minutes)}</span>
-                              <span>{to.distance_km} km</span>
-                              {to.departure_time && <span>🕐 {to.departure_time}</span>}
-                            </div>
-                          </div>
-                          <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--primary)' }}>
+                          {to.route_number && (
+                            <span style={{
+                              fontWeight: 700, fontSize: 13, letterSpacing: '0.02em',
+                              padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                              background: to.mode === 'metro'
+                                ? (to.route_number.toLowerCase().includes('purple') ? 'rgba(126,34,206,0.2)' :
+                                   to.route_number.toLowerCase().includes('green') ? 'rgba(22,163,74,0.2)' : 'var(--primary-container)')
+                                : 'var(--primary-container)',
+                              color: to.mode === 'metro'
+                                ? (to.route_number.toLowerCase().includes('purple') ? '#7E22CE' :
+                                   to.route_number.toLowerCase().includes('green') ? '#16A34A' : 'var(--primary)')
+                                : 'var(--primary)',
+                            }}>
+                              {to.route_number}
+                            </span>
+                          )}
+                          {!to.route_number && (
+                            <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>
+                              {getModeLabel(to.mode)}
+                            </span>
+                          )}
+                          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--primary)', lineHeight: 1.2 }}>
                               {formatRupees(to.fare)}
                             </div>
                             <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                              {getModeLabel(to.mode)}
+                              {formatDuration(to.duration_minutes)}
                             </div>
                           </div>
                         </div>
 
-                        {/* Bus times */}
-                        {to.bus_times && to.bus_times.length > 0 && (
+                        {/* Row 2: From → To stop names */}
+                        <div style={{
+                          fontSize: 12, color: 'var(--text)', marginBottom: 6,
+                          padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                          background: 'var(--surface-container-lowest)',
+                          display: 'flex', alignItems: 'center', gap: 6,
+                        }}>
+                          <span style={{ fontWeight: 500, maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={to.from || getLocationName(activeSegIdx)}>
+                            {to.from || getLocationName(activeSegIdx)}
+                          </span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 14, color: 'var(--text-muted)', flexShrink: 0 }}>arrow_forward</span>
+                          <span style={{ fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={to.to || ''}>
+                            {to.to || 'towards destination'}
+                          </span>
+                        </div>
+
+                        {/* Row 3: Departure/arrival times */}
+                        {to.departure_time && (
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>schedule</span>
+                            <span><strong>Dep:</strong> {to.departure_time}</span>
+                            {to.arrival_time && <span><strong>Arr:</strong> {to.arrival_time}</span>}
+                          </div>
+                        )}
+
+                        {/* Row 4: Time status badge */}
+                        {to.is_running === false && to.time_status && (
                           <div style={{
-                            display: 'flex', gap: 4, marginTop: 6,
-                            flexWrap: 'wrap',
+                            marginTop: 6, padding: '4px 8px', fontSize: 10,
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                            color: '#ef4444',
+                            display: 'flex', alignItems: 'center', gap: 4,
                           }}>
-                            {to.bus_times.slice(0, 6).map((bt, bti) => (
-                              <span key={bti} style={{
-                                fontSize: 10, padding: '2px 6px',
-                                borderRadius: 'var(--radius-sm)',
-                                background: 'var(--surface-container-high)',
-                                color: 'var(--text-muted)',
-                                fontVariantNumeric: 'tabular-nums',
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>schedule</span>
+                            <span>{to.time_status}</span>
+                          </div>
+                        )}
+                        {to.is_running !== false && to.time_status && (
+                          <div style={{
+                            marginTop: 6, padding: '4px 8px', fontSize: 10,
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(34, 197, 94, 0.1)',
+                            border: '1px solid rgba(34, 197, 94, 0.2)',
+                            color: '#22c55e',
+                            display: 'flex', alignItems: 'center', gap: 4,
+                          }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>check_circle</span>
+                            <span>{to.time_status}</span>
+                          </div>
+                        )}
+
+                        {/* Row 5: Bus departure frequency */}
+                        {to.bus_times && to.bus_times.length > 0 && !isBusNotRunning && (
+                          <div style={{ marginTop: 6 }}>
+                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3, fontWeight: 500 }}>
+                              Next departures:
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              {to.bus_times.slice(0, 6).map((bt, bti) => (
+                                <span key={bti} style={{
+                                  fontSize: 10, padding: '2px 6px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  background: 'var(--surface-container-high)',
+                                  color: 'var(--text-muted)',
+                                  fontVariantNumeric: 'tabular-nums',
+                                }}>
+                                  {bt.departure_time}
+                                </span>
+                              ))}
+                              {to.bus_times.length > 6 && (
+                                <span style={{ fontSize: 10, padding: '2px 6px', color: 'var(--text-muted)' }}>
+                                  +{to.bus_times.length - 6} more
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Fallback alternatives when bus not running */}
+                        {isBusNotRunning && to.alternative_options && to.alternative_options.length > 0 && (
+                          <div style={{
+                            marginTop: 6, padding: '6px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(251, 191, 36, 0.1)',
+                            border: '1px solid rgba(251, 191, 36, 0.2)',
+                            fontSize: 11,
+                          }}>
+                            <div style={{ fontWeight: 500, color: '#f59e0b', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>lightbulb</span>
+                              Based on the current time, here's what we recommend instead:
+                            </div>
+                            {to.alternative_options.slice(0, 3).map((alt, ai) => (
+                              <div key={ai} style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                padding: '2px 0', fontSize: 11, color: 'var(--text)',
                               }}>
-                                {bt.departure_time}
-                              </span>
+                                <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                  {alt.mode === 'walk' ? 'directions_walk' : alt.mode === 'auto' ? 'pedal_bike' : 'local_taxi'}
+                                </span>
+                                <span>{alt.label || getModeLabel(alt.mode)}</span>
+                                <span>· {formatDuration(alt.duration_minutes)}</span>
+                                {alt.fare > 0 && <span>· {formatRupees(alt.fare)}</span>}
+                              </div>
                             ))}
-                            {to.bus_times.length > 6 && (
-                              <span style={{ fontSize: 10, padding: '2px 6px', color: 'var(--text-muted)' }}>
-                                +{to.bus_times.length - 6} more
-                              </span>
-                            )}
                           </div>
                         )}
 
@@ -511,16 +741,22 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
 
                         {/* Confirm button */}
                         {isSelectedTransit && (
-                          <button onClick={handleConfirmTransit}
+                          <button onClick={handleConfirmTransit} disabled={extending}
                             style={{
                               width: '100%', padding: '10px', marginTop: 8,
                               border: 'none', borderRadius: 'var(--radius-md)',
-                              background: 'var(--secondary)', color: 'white',
-                              fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                              background: extending ? 'var(--text-muted)' : 'var(--secondary)',
+                              color: 'white',
+                              fontSize: 13, fontWeight: 600, cursor: extending ? 'wait' : 'pointer',
                               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                              opacity: extending ? 0.7 : 1,
                             }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_forward</span>
-                            {selectedTransit?.next_segment_index !== undefined && selectedTransit?.next_segment_index !== null ? 'Continue to Next Step' : 'Complete Journey'}
+                            {extending ? (
+                              <><div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Finding onward connections...</>
+                            ) : (
+                              <><span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_forward</span>
+                              {selectedTransit?.next_segment_index !== undefined && selectedTransit?.next_segment_index !== null ? 'Continue to Next Step' : 'Find Onward Transit'}</>
+                            )}
                           </button>
                         )}
                       </div>
@@ -548,6 +784,26 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
           {/* Route paths suggestions */}
           {stepState === 'pick_dest' && currentSeg.route_paths && currentSeg.route_paths.length > 0 && (
             <div style={{ marginTop: 14 }}>
+              {(() => {
+                const h = new Date().getHours()
+                const hasLateRoutes = currentSeg.route_paths?.some(rp => rp.legs?.some(l => l.is_running === false))
+                const isLate = h >= 22 || h < 1
+                if (isLate || hasLateRoutes) {
+                  return (
+                    <div style={{
+                      padding: '6px 10px', marginBottom: 8, fontSize: 10,
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'rgba(251, 191, 36, 0.12)',
+                      border: '1px solid rgba(251, 191, 36, 0.25)',
+                      color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 4,
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 12, color: '#f59e0b' }}>info</span>
+                      <span>Some bus routes may not be running at this hour — check individual options for details.</span>
+                    </div>
+                  )
+                }
+                return null
+              })()}
               <div style={{
                 fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
                 textTransform: 'uppercase', marginBottom: 6,
@@ -578,20 +834,29 @@ export default function SegmentFlowView({ segments, sourceName, destName, onRout
                       </span>
                     </div>
                     <div style={{ padding: '6px 10px' }}>
-                      {rp.legs.map((leg, li) => (
+                      {rp.legs.map((leg, li) => {
+                        const legNotRunning = leg.is_running === false
+                        return (
                         <div key={li} style={{
                           display: 'flex', alignItems: 'center', gap: 4,
                           padding: '3px 0', fontSize: 11,
+                          opacity: legNotRunning ? 0.5 : 1,
                         }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                            {leg.mode === 'walk' ? 'directions_walk' : leg.mode === 'metro' ? 'subway' : 'directions_bus'}
-                          </span>
-                          <span style={{ fontWeight: 500 }}>{leg.route_number || getModeLabel(leg.mode)}</span>
+                          {legNotRunning ? (
+                            <span className="material-symbols-outlined" style={{ fontSize: 12, color: '#ef4444' }}>block</span>
+                          ) : (
+                            <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                              {leg.mode === 'walk' ? 'directions_walk' : leg.mode === 'metro' ? 'subway' : 'directions_bus'}
+                            </span>
+                          )}
+                          <span style={{ fontWeight: 500, textDecoration: legNotRunning ? 'line-through' : 'none' }}>{leg.route_number || getModeLabel(leg.mode)}</span>
                           <span className="material-symbols-outlined" style={{ fontSize: 10, color: 'var(--text-muted)' }}>arrow_forward</span>
                           <span style={{ color: 'var(--text-muted)', flex: 1 }}>{leg.to}</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{leg.duration_minutes}min</span>
+                          <span style={{ color: legNotRunning ? '#ef4444' : 'var(--text-muted)', fontSize: 10 }}>
+                            {legNotRunning ? 'Not running' : `${leg.duration_minutes}min`}
+                          </span>
                         </div>
-                      ))}
+                      )})}
                       <div style={{
                         display: 'flex', gap: 8, fontSize: 10,
                         color: 'var(--text-muted)', marginTop: 4,

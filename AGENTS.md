@@ -77,7 +77,22 @@ cd frontend; npx vite --port 3000
 docker compose up -d osrm-car
 ```
 
-## Recent Fixes
+## Quality Assurance
+- Tests: `pytest tests/ -q` (21 tests: test_fare_engine.py + test_segment_builder.py)
+- Frontend: `npx tsc --noEmit` must pass with zero errors
+- Backend: `python -c "from backend.services... import ..."` must compile cleanly
+
+## Fixes from Latest Session (Jul 29)
+- ✅ **Path coordinate format** — `SegmentFlowView.tsx` was swapping `[lat,lng]`→`[lng,lat]` in 9 places; Leaflet needs `[lat,lng]` which is what backend returns
+- ✅ **Real OSRM walk paths** — `transit_paths.py:interpolate_path()` now tries synchronous OSRM foot (port 5001) first for walkable distances ≤3km; falls back to interpolated when OSRM unavailable
+- ✅ **Path shown after each segment confirm** — `SegmentFlowView.tsx:handleConfirmTransit()` now calls `onRouteGeometry(accGeo)` immediately after each confirmation (not just at journey end)
+- ✅ **Destination marker on card click** — `MainPage.tsx:onSelectPlace` calls `setDstLoc` + `setDstQ` so clicking search result sets red pin
+- ✅ **Full-shape fallback removed** — `segment_builder.py` removed `full_shape` from path fallback chain (lines 882, 907, 1218); was drawing entire bus route (e.g., NES Office→Doddaballapura) instead of stop-to-stop segment, causing "random lines" on map
+- ✅ **GTFS time filter fallback** — `gtfs_service.py:get_all_routes_at_stop()` falls back to all departures when future-departure filtering returns empty
+- ✅ **Direction filter rewritten** — `transit_config.py:_route_goes_toward_dest()` handles routes starting/ending at source stop; relaxed cos_angle threshold 0.5→0.3; early-returns True when route endpoint is closer to dest
+- ✅ **Distance check absolute** — `segment_builder.py` direction distance check changed from relative `* 0.90` to absolute `+ 0.5` tolerance
+
+## Remaining
 - ✅ **GTFS route number cleaning** — `gtfs_service.py:clean_route_short_name()` strips terminal suffixes (e.g., "MF-28 JKLO-ISROQ-LGRNB" → "MF-28"), applied at both GTFS load time and CSV bus_stop source
 - ✅ **Real reviews via SerpAPI** — `review_tools.py:get_place_reviews()` fixed broken SerpAPI flow (was calling `_parse_place_detail` on search response instead of using `search_places` → `place_id` → `place_details`); removed LLM fake review generation entirely
 - ✅ **SerpAPI place_details key fix** — `serpapi_client.py:_parse_place_detail()` response key fixed from `"place"` to `"place_results"` (actual SerpAPI key); review data is in `place_results.user_reviews.most_relevant` (not `place_results.reviews` which is an int count); review fields are `username`/`description` (not `user.name`/`snippet`)
@@ -106,6 +121,15 @@ docker compose up -d osrm-car
   - Bare except in config.py fixed: `except:` → `except (json.JSONDecodeError, TypeError):`
   - pytest setup with test_fare_engine.py (~15 test cases) + test_segment_builder.py (~8 integration tests)
   - SegmentPanel.tsx deleted (zero imports, 730 lines dead)
+- ✅ **Sprint 5 (Route fixes & hop improvements)**
+  - **Walk as standalone transit hop** — `_add_transit_options()` now adds a `"walk"` transit option (≤2km, free) alongside bus/metro/train options; includes interpolated path, `transit_type: "walk"`, zero fare
+  - **Metro→bus chaining** — metro options in `get_segment_step_options()` (bus stop→metro→dest) now include `_build_next_transit()` for onward transit from the arrival metro station
+  - **GTFS name variant fallback** — `_cached_shape_path` falls back to stripping space-delimited suffix; `_cached_shape_between` uses `_resolve_name()` if first attempt returns nothing
+  - **Search place coordinate verification** — `geocoding.py:search_places()` tightened Bangalore radius 50→15km, added ≥40% keyword overlap filter between query and result name/address
+  - **Cache invalidation** — `review_tools.py` added `_CACHE_VERSION = 2` to cache key; all stale `reliability_score` entries from old `min(1.0, review_count/100)` formula are invalidated
+  - **Always recompute `reliability_score` from rating** — `geocoding.py:_enrich_results()` never blindly trusts external `reliability_score`; always calls `_score_from_rating(rating)`
+  - **Dead import removed** — `google_reviews_scraper` import removed from `review_tools.py` (unused)
+  - Verified: 21/21 pytest pass, frontend `tsc --noEmit` zero errors, all backend modules compile
 
 ## Remaining
 - Fix OSRM Foot OOM (smaller PBF or more RAM)

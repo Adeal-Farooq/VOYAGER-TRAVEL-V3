@@ -103,22 +103,22 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
     try {
       if (subMode === 'drive') {
         const data = await planRoute({
-          source_lat: sourceLocation[0], source_lng: sourceLocation[1],
-          dest_lat: destLocation[0], dest_lng: destLocation[1],
+          source_lat: srcLoc[0], source_lng: srcLoc[1],
+          dest_lat: dstLoc[0], dest_lng: dstLoc[1],
           mode: 'personal', group_size: groupSize, budget: budget,
         })
         if (ctrl.signal.aborted) return
         if (data?.routes) setRoutes(data.routes)
         const prices = await getRidePrices(
           sourceQuery || 'Source', destQuery || 'Destination',
-          sourceLocation[0], sourceLocation[1],
-          destLocation[0], destLocation[1],
+          srcLoc[0], srcLoc[1],
+          dstLoc[0], dstLoc[1],
         )
         if (!ctrl.signal.aborted) setRidePrices(prices?.prices || [])
       } else if (subMode === 'walk') {
         const data = await planRoute({
-          source_lat: sourceLocation[0], source_lng: sourceLocation[1],
-          dest_lat: destLocation[0], dest_lng: destLocation[1],
+          source_lat: srcLoc[0], source_lng: srcLoc[1],
+          dest_lat: dstLoc[0], dest_lng: dstLoc[1],
           mode: 'walking', group_size: groupSize, budget: budget,
         })
         if (ctrl.signal.aborted) return
@@ -127,7 +127,7 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
         if (transportType === 'direct') {
           const [pricesRes, driveRes] = await Promise.allSettled([
             getRidePrices(sourceQuery || 'Source', destQuery || 'Destination',
-              sourceLocation[0], sourceLocation[1], destLocation[0], destLocation[1]),
+              srcLoc[0], srcLoc[1], dstLoc[0], dstLoc[1]),
             planRoute({
               source_lat: srcLoc[0], source_lng: srcLoc[1],
               dest_lat: dstLoc[0], dest_lng: dstLoc[1],
@@ -171,8 +171,8 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
           })
           const prices = await getRidePrices(
             sourceQuery || 'Source', destQuery || 'Destination',
-            sourceLocation[0], sourceLocation[1],
-            destLocation[0], destLocation[1],
+            srcLoc[0], srcLoc[1],
+            dstLoc[0], dstLoc[1],
           )
           if (!ctrl.signal.aborted) setRidePrices(prices?.prices || [])
         }
@@ -246,17 +246,24 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
     <div>
       <div className="glass-strong ambient-shadow" style={{ padding: 12, borderRadius: 'var(--radius-xl)', marginBottom: 12, position: 'relative' }}>
         <div style={{ position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', marginBottom: 6, borderRadius: 'var(--radius-md)', background: 'var(--surface-container-lowest)', border: '1px solid var(--outline-variant)' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--secondary)', fontVariationSettings: "'FILL' 1" }}>my_location</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', marginBottom: 6, borderRadius: 'var(--radius-md)', background: 'var(--surface-container-lowest)', border: sourceLocation ? '1px solid var(--secondary)' : '1px solid var(--outline-variant)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--secondary)', fontVariationSettings: "'FILL' 1" }}>{sourceLocation ? 'check_circle' : 'my_location'}</span>
             <input type="text" placeholder="Current Location..."
               value={sourceQuery}
               onChange={(e) => setSourceQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') pickSource(sourceQuery) }}
               style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', color: 'var(--text)' }}
             />
             {sourceQuery && (
-              <button onClick={() => { setSourceQuery(''); setSourceLocation(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
-              </button>
+              <>
+                <button onClick={() => pickSource(sourceQuery)}
+                  style={{ background: 'var(--primary)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'white', cursor: 'pointer', padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                  OK
+                </button>
+                <button onClick={() => { setSourceQuery(''); setSourceLocation(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                </button>
+              </>
             )}
           </div>
           {sourceSuggestions.length > 0 && (
@@ -273,17 +280,24 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--surface-container-lowest)', border: '1px solid var(--outline-variant)' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--error)', fontVariationSettings: "'FILL' 1" }}>location_on</span>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--surface-container-lowest)', border: destLocation ? '1px solid var(--error)' : '1px solid var(--outline-variant)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--error)', fontVariationSettings: "'FILL' 1" }}>{destLocation ? 'check_circle' : 'location_on'}</span>
             <input type="text" placeholder="Where to?"
               value={destQuery}
               onChange={(e) => setDestQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') pickDest(destQuery) }}
               style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', color: 'var(--text)' }}
             />
             {destQuery && (
-              <button onClick={() => { setDestQuery(''); setDestLocation(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
-              </button>
+              <>
+                <button onClick={() => pickDest(destQuery)}
+                  style={{ background: 'var(--primary)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'white', cursor: 'pointer', padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                  OK
+                </button>
+                <button onClick={() => { setDestQuery(''); setDestLocation(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                </button>
+              </>
             )}
           </div>
           <button onClick={swapLocations}
@@ -660,6 +674,8 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
                     segments={segments}
                     sourceName={sourceQuery || 'Current Location'}
                     destName={destQuery || 'Destination'}
+                    destLat={destLocation?.[0]}
+                    destLng={destLocation?.[1]}
                     onRouteGeometry={onRouteGeometry}
                   />
                 </div>
