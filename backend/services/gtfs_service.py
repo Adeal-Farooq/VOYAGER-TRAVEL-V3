@@ -685,4 +685,62 @@ class GTFSLoader:
         """Public method to resolve a stop name to its GTFS key."""
         return self._resolve_name(name)
 
+    def get_route_operating_hours(self, route_number: str) -> dict:
+        """Get first and last departure times for a route across all stops.
+        Returns {first_departure, last_departure} or empty dict if no data."""
+        rn = route_number.strip().upper()
+        times = self._stop_times_by_route.get(rn, [])
+        if not times:
+            return {}
+        all_secs = []
+        for dep_time, _ in times:
+            secs = _time_to_seconds(dep_time)
+            if 0 <= secs < 86400:
+                all_secs.append(secs)
+        if not all_secs:
+            return {}
+        first_sec = min(all_secs)
+        last_sec = max(all_secs)
+        def _fmt(s):
+            h = s // 3600
+            m = (s % 3600) // 60
+            return f"{h:02d}:{m:02d}"
+        return {
+            "first_departure": _fmt(first_sec),
+            "last_departure": _fmt(last_sec),
+        }
+
+    def get_route_schedule_status(self, route_number: str, current_time_str: str = None) -> dict:
+        """Check whether a bus route is currently operating.
+        Returns {is_running, first_bus, last_bus, next_departure, message}."""
+        hours = self.get_route_operating_hours(route_number)
+        if not hours:
+            return {"is_running": True, "message": "", "schedule_known": False}
+        now = _now()
+        current_sec = now.hour * 3600 + now.minute * 60 + now.second
+        first_sec = _time_to_seconds(hours["first_departure"] + ":00")
+        last_sec = _time_to_seconds(hours["last_departure"] + ":00")
+        is_running = first_sec <= current_sec <= last_sec
+        # Find next departure
+        times = self._stop_times_by_route.get(route_number.strip().upper(), [])
+        next_dep = None
+        for dep_time, _ in sorted(times, key=lambda x: x[0]):
+            if _time_to_seconds(dep_time) >= current_sec:
+                next_dep = dep_time
+                break
+        msg = ""
+        if not is_running:
+            if current_sec < first_sec:
+                msg = f"First bus on this route is at {hours['first_departure']}"
+            else:
+                msg = f"Last bus on this route was at {hours['last_departure']}"
+        return {
+            "is_running": is_running,
+            "first_bus": hours["first_departure"],
+            "last_bus": hours["last_departure"],
+            "next_departure": next_dep,
+            "message": msg,
+            "schedule_known": True,
+        }
+
 gtfs_loader = GTFSLoader()

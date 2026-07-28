@@ -177,6 +177,7 @@ export interface RoutePathLeg {
   from: string; to: string; mode: string; route_number: string
   distance_km: number; duration_minutes: number; fare: number
   departure_times?: string[]; shape_path?: number[][]
+  is_running?: boolean; time_status?: string
 }
 
 export interface RoutePath {
@@ -211,6 +212,9 @@ export interface TransitOption extends SegmentStepOption {
   transit_type?: string
   departure_time?: string
   arrival_time?: string
+  is_running?: boolean
+  time_status?: string
+  alternative_options?: SegmentStepOption[]
   final_options: SegmentStepOption[]
   next_transit?: TransitOption[]
   next_segment_index?: number

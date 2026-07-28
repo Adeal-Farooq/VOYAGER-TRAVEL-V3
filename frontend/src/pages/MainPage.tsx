@@ -43,6 +43,10 @@ export default function MainPage() {
         const fullPlace = { ...place, ...enriched.place }
         setSelectedPlace(fullPlace)
         openDiscovery(fullPlace)
+        // Propagate enriched data back to markers so list card also reflects real rating
+        setAllMarkers(allMarkers.map(p =>
+          p.name === fullPlace.name && Math.abs(p.lat - fullPlace.lat) < 0.001 ? fullPlace : p
+        ))
       } else {
         openDiscovery(place)
       }
@@ -50,7 +54,7 @@ export default function MainPage() {
       openDiscovery(place)
     }
     setEnrichingName(null)
-  }, [setSelectedPlace, openDiscovery, setMapCenter, mapRef])
+  }, [setSelectedPlace, openDiscovery, setMapCenter, mapRef, setAllMarkers])
 
   const {
     setSourceLocation: setSrcLoc,
@@ -148,6 +152,8 @@ export default function MainPage() {
           newsItems={newsItems}
           searchCenter={searchCenter}
           searchRadius={searchRadius}
+          numberedMarkers={!!searchCenter}
+          highlightPlace={discoveryPlace || selectedPlace}
         />
 
         {showDiscovery && discoveryPlace && mode === 'search' && (

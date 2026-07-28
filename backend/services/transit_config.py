@@ -126,3 +126,32 @@ def _has_gtfs_route(stop_name) -> bool:
         return False
     key = gtfs.resolve_name(stop_name)
     return key is not None
+
+def _get_time_period() -> str:
+    """Return 'daytime', 'late_night', or 'early_morning' based on current hour."""
+    h = _current_hour()
+    if 6 <= h < 22:
+        return "daytime"
+    elif 22 <= h < 24 or 0 <= h < 1:
+        return "late_night"
+    else:
+        return "early_morning"
+
+def _is_bus_running_now(route_number: str) -> dict:
+    """Check if a bus route is currently operating. Returns status dict."""
+    gtfs = _ensure_gtfs()
+    if not gtfs:
+        return {"is_running": True, "message": "", "schedule_known": False}
+    try:
+        return gtfs.get_route_schedule_status(route_number)
+    except Exception:
+        return {"is_running": True, "message": "", "schedule_known": False}
+
+def _get_safety_advisory() -> str:
+    """Return a contextual safety message based on time of day."""
+    period = _get_time_period()
+    if period == "late_night":
+        return "It's late at night — cab/auto is the safest option right now"
+    elif period == "early_morning":
+        return "Early morning — public transport may be limited, cabs are reliable"
+    return ""

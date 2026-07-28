@@ -6,13 +6,14 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 from backend.services.clients.reddit_client import reddit_client
-from backend.services.scrapers.google_reviews_scraper import google_reviews_scraper
 
 _REVIEW_CACHE = {}
 _CACHE_TTL = 3600
+# Increment when reliability_score formula changes to invalidate all stale cache entries
+_CACHE_VERSION = 2
 
 def _cache_key(name, address):
-    return f"{name.lower().strip()}|{(address or '').lower().strip()}"
+    return f"{name.lower().strip()}|{(address or '').lower().strip()}|v{_CACHE_VERSION}"
 
 def _get_cached(key):
     entry = _REVIEW_CACHE.get(key)

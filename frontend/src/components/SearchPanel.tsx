@@ -38,7 +38,7 @@ const NEARBY_TAGS = [
 export default function SearchPanel({
   onSelectPlace, onViewOnMap, onViewDetails, onNavigateToPlace, enrichingName,
 }: SearchPanelProps) {
-  const { userLocation, setAllMarkers, setSearchCenter, setSearchRadius } = useApp()
+  const { userLocation, setAllMarkers, setSearchCenter, setSearchRadius, discoveryPlace } = useApp()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<PlaceResult[]>([])
   const [suggestions, setSuggestions] = useState<string[]>([])
@@ -254,7 +254,8 @@ export default function SearchPanel({
               </div>
             ))}
             {nearbyResults.map((place, i) => (
-              <PlaceCard key={i} place={place}
+              <PlaceCard key={i} place={place} index={i}
+                isSelected={discoveryPlace?.name === place.name && Math.abs((discoveryPlace?.lat || 0) - place.lat) < 0.001}
                 onView={() => { onSelectPlace(place); onViewOnMap(place) }}
                 onNavigate={() => onNavigateToPlace(place)}
                 onViewDetails={() => onViewDetails(place)}
@@ -273,20 +274,23 @@ export default function SearchPanel({
   )
 }
 
-function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
-  place: PlaceResult; onView: () => void; onNavigate: () => void; onViewDetails?: () => void; isLoading?: boolean
+const CARD_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16']
+
+function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading, index, isSelected }: {
+  place: PlaceResult; onView: () => void; onNavigate: () => void; onViewDetails?: () => void; isLoading?: boolean; index?: number; isSelected?: boolean
 }) {
   const score = place.reliability_score || 0.5
   const [imgError, setImgError] = useState(false)
   const [showReviews, setShowReviews] = useState(false)
   const reviews = place.reviews?.slice(0, 3) || []
+  const markerColor = index !== undefined ? CARD_COLORS[index % CARD_COLORS.length] : undefined
 
   return (
     <div onClick={onView} className="slide-up" style={{
       padding: 14, marginBottom: 10, borderRadius: 'var(--radius-lg)', cursor: 'pointer',
-      background: getScoreColor(score * 100) === '#22c55e' ? '#f0fdf4' : getScoreColor(score * 100) === '#eab308' ? '#fffbeb' : '#fef2f2',
-      border: `1px solid ${getScoreColor(score * 100) === '#22c55e' ? '#bbf7d0' : getScoreColor(score * 100) === '#eab308' ? '#fde68a' : '#fecaca'}`,
-      borderLeft: `3px solid ${getScoreColor(score * 100)}`,
+      background: isSelected ? 'var(--primary-fixed)' : getScoreColor(score * 100) === '#22c55e' ? '#f0fdf4' : getScoreColor(score * 100) === '#eab308' ? '#fffbeb' : '#fef2f2',
+      border: `1px solid ${isSelected ? 'var(--primary)' : getScoreColor(score * 100) === '#22c55e' ? '#bbf7d0' : getScoreColor(score * 100) === '#eab308' ? '#fde68a' : '#fecaca'}`,
+      borderLeft: `3px solid ${isSelected ? 'var(--primary)' : getScoreColor(score * 100)}`,
       transition: 'all 0.2s',
     }}>
       {place.image_url && !imgError && (
@@ -298,14 +302,17 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        {index !== undefined && (
+          <span style={{
+            width: 22, height: 22, borderRadius: '50%', background: markerColor,
+            color: 'white', fontSize: 11, fontWeight: 700, display: 'flex',
+            alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>{index + 1}</span>
+        )}
         <span className="material-symbols-outlined fill" style={{
           fontSize: 20, color: getScoreColor(score * 100),
         }}>{getPlaceIconName(place.place_type)}</span>
         <span className="text-headline-sm" style={{ flex: 1 }}>{place.name}</span>
-        <span className="reliability-pill" style={{ background: getScoreColor(score * 100), color: 'white', fontSize: 11, padding: '2px 10px' }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 12 }}>{score >= 0.6 ? 'verified' : 'warning'}</span>
-          {getScoreLabel(score * 100)} ({(score * 100).toFixed(0)}%)
-        </span>
       </div>
 
       {place.address && (
@@ -317,12 +324,6 @@ function PlaceCard({ place, onView, onNavigate, onViewDetails, isLoading }: {
 
       <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-muted)', marginBottom: 6, flexWrap: 'wrap' }}>
         {place.distance_km !== undefined && <span>📍 {place.distance_km} km</span>}
-        {place.rating && (
-          <span>
-            <span className="material-symbols-outlined" style={{ fontSize: 12, verticalAlign: 'middle', color: '#f59e0b' }}>star</span>
-            {' '}{place.rating.toFixed(1)}
-          </span>
-        )}
         <span className="place-type-badge">{place.place_type.replace(/_/g, ' ')}</span>
       </div>
 

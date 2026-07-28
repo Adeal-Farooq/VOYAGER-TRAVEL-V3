@@ -77,6 +77,11 @@ cd frontend; npx vite --port 3000
 docker compose up -d osrm-car
 ```
 
+## Quality Assurance
+- Tests: `pytest tests/ -q` (21 tests: test_fare_engine.py + test_segment_builder.py)
+- Frontend: `npx tsc --noEmit` must pass with zero errors
+- Backend: `python -c "from backend.services... import ..."` must compile cleanly
+
 ## Recent Fixes
 - ✅ **GTFS route number cleaning** — `gtfs_service.py:clean_route_short_name()` strips terminal suffixes (e.g., "MF-28 JKLO-ISROQ-LGRNB" → "MF-28"), applied at both GTFS load time and CSV bus_stop source
 - ✅ **Real reviews via SerpAPI** — `review_tools.py:get_place_reviews()` fixed broken SerpAPI flow (was calling `_parse_place_detail` on search response instead of using `search_places` → `place_id` → `place_details`); removed LLM fake review generation entirely
@@ -106,6 +111,15 @@ docker compose up -d osrm-car
   - Bare except in config.py fixed: `except:` → `except (json.JSONDecodeError, TypeError):`
   - pytest setup with test_fare_engine.py (~15 test cases) + test_segment_builder.py (~8 integration tests)
   - SegmentPanel.tsx deleted (zero imports, 730 lines dead)
+- ✅ **Sprint 5 (Route fixes & hop improvements)**
+  - **Walk as standalone transit hop** — `_add_transit_options()` now adds a `"walk"` transit option (≤2km, free) alongside bus/metro/train options; includes interpolated path, `transit_type: "walk"`, zero fare
+  - **Metro→bus chaining** — metro options in `get_segment_step_options()` (bus stop→metro→dest) now include `_build_next_transit()` for onward transit from the arrival metro station
+  - **GTFS name variant fallback** — `_cached_shape_path` falls back to stripping space-delimited suffix; `_cached_shape_between` uses `_resolve_name()` if first attempt returns nothing
+  - **Search place coordinate verification** — `geocoding.py:search_places()` tightened Bangalore radius 50→15km, added ≥40% keyword overlap filter between query and result name/address
+  - **Cache invalidation** — `review_tools.py` added `_CACHE_VERSION = 2` to cache key; all stale `reliability_score` entries from old `min(1.0, review_count/100)` formula are invalidated
+  - **Always recompute `reliability_score` from rating** — `geocoding.py:_enrich_results()` never blindly trusts external `reliability_score`; always calls `_score_from_rating(rating)`
+  - **Dead import removed** — `google_reviews_scraper` import removed from `review_tools.py` (unused)
+  - Verified: 21/21 pytest pass, frontend `tsc --noEmit` zero errors, all backend modules compile
 
 ## Remaining
 - Fix OSRM Foot OOM (smaller PBF or more RAM)

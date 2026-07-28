@@ -8,6 +8,7 @@ from backend.services.transit_config import (
     _get_train_options, _safe, _current_hour, _is_metro_operating,
     _haversine_dist, _MAJOR_HUBS, _route_goes_toward_dest,
     _gtfs_buses_at_stop, _has_gtfs_route, clean_route_short_name,
+    _is_bus_running_now, _get_time_period, _get_safety_advisory,
 )
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,13 @@ class TripSegmentBuilder:
                 if budget and fare > budget:
                     valid = False
                     break
+                is_running = True
+                time_status = ""
+                if mode in ("bus_ordinary", "bus_ac_vajra") and leg.get("route_number"):
+                    bus_status = _is_bus_running_now(leg["route_number"])
+                    is_running = bus_status.get("is_running", True)
+                    if not is_running:
+                        time_status = bus_status.get("message", "Not running at this time")
                 legs_clean.append({
                     "from": leg.get("from", ""),
                     "to": leg.get("to", ""),
@@ -98,6 +106,8 @@ class TripSegmentBuilder:
                     "per_person": round(fare / max(group_size, 1)),
                     "departure_times": leg.get("departure_times", []),
                     "shape_path": leg.get("shape_path"),
+                    "is_running": is_running,
+                    "time_status": time_status,
                 })
             if not valid or not legs_clean:
                 continue
@@ -311,6 +321,11 @@ class TripSegmentBuilder:
                         continue
                     bus_times_list = [{"departure_time": t, "route": rn} for t in next_deps]
                     to_label = route_dest_name or f"{rn} towards destination"
+                    bus_status = _is_bus_running_now(rn)
+                    is_running = bus_status.get("is_running", True)
+                    time_status = ""
+                    if not is_running:
+                        time_status = bus_status.get("message", "Not running at this time")
                     stop_entry["from_stop_options"].append({
                         "mode": "bus_ordinary", "label": f"Bus {rn}", "icon": "\U0001f68c",
                         "route_number": rn,
@@ -323,6 +338,8 @@ class TripSegmentBuilder:
                         "to_lng": _safe(route_dest_coords[1] if route_dest_coords else stop.get("lng")),
                         "arrives_at_stop": True,
                         "bus_times": bus_times_list[:5],
+                        "is_running": is_running,
+                        "time_status": time_status,
                     })
                     # AC Vajra variant
                     ac_fare_pp = max(10, round(db.get_bmtc_ac_fare(transit_dist) or 10))
@@ -340,6 +357,8 @@ class TripSegmentBuilder:
                             "to_lng": _safe(route_dest_coords[1] if route_dest_coords else stop.get("lng")),
                             "arrives_at_stop": True,
                             "bus_times": bus_times_list[:5],
+                            "is_running": is_running,
+                            "time_status": time_status,
                         })
             # From this stop: metro rides (only if realistic — within 5km of a metro station)
             for dm in dest_nearby_metro[:2]:
@@ -354,6 +373,13 @@ class TripSegmentBuilder:
                 total_fare = metro_fare_pp * group_size
                 if budget and total_fare > budget:
                     continue
+                dm_dest_dist = _safe(self._haversine(dm["lat"], dm["lng"], dest_lat, dest_lng))
+                metro_next_transit = []
+                if dm_dest_dist > 1.5:
+                    metro_next_transit = self._build_next_transit(
+                        dm["lat"], dm["lng"], stop_name, dest_lat, dest_lng, dest_name,
+                        group_size, budget, dest_nearby_metro, ride_types, dm.get("name", ""), depth=2
+                    )
                 stop_entry["from_stop_options"].append({
                     "mode": "metro", "label": f"Metro to {dm['name']}", "icon": "\U0001f687",
                     "from": stop_name, "to": dm.get("name", "Metro Station"),
@@ -363,6 +389,7 @@ class TripSegmentBuilder:
                     "from_lat": _safe(stop.get("lat")), "from_lng": _safe(stop.get("lng")),
                     "to_lat": _safe(dm.get("lat")), "to_lng": _safe(dm.get("lng")),
                     "arrives_at_stop": True,
+                    "next_transit": metro_next_transit,
                 })
             # From this stop: direct rides to destination
             if stop_to_dest_dist <= 2:
@@ -794,6 +821,48 @@ class TripSegmentBuilder:
                         group_size, budget, dest_nearby_metro, ride_types, arrival_name, depth=2
                     )
 
+                    # Check bus operating status for this route
+                    bus_status = _is_bus_running_now(rn)
+                    is_running = bus_status.get("is_running", True)
+                    schedule_known = bus_status.get("schedule_known", False)
+                    time_status = ""
+                    if not is_running:
+                        time_status = bus_status.get("message", "Not running at this time")
+                    elif schedule_known and bus_status.get("next_departure"):
+                        time_status = f"Next bus at {bus_status['next_departure']}"
+
+                    # Compute fallback alternatives if bus not running
+                    fallback_options = []
+                    if not is_running:
+                        hop_dist = transit_dist
+                        if hop_dist <= 2.0:
+                            fallback_options.append({
+                                "mode": "walk", "label": "Walk instead", "icon": "\U0001f6b6",
+                                "from": sname, "to": dest_name,
+                                "distance_km": round(hop_dist, 2),
+                                "duration_minutes": round(hop_dist * 12),
+                                "fare": 0, "per_person": 0,
+                                "from_lat": s_lat, "from_lng": s_lng,
+                                "to_lat": dest_lat, "to_lng": dest_lng,
+                                "path": self._interpolate(s_lat, s_lng, t_lat, t_lng, num_points=6),
+                            })
+                        for mode_label, mode_display, per_km_rate, time_per_km, base_fare, icon, capacity, free_km in ride_types:
+                            if group_size <= capacity:
+                                ride_total = _calc_ride_fare(hop_dist, base_fare, per_km_rate, free_km)
+                                pp = round(ride_total / group_size)
+                                if not budget or ride_total <= budget:
+                                    fallback_options.append({
+                                        "mode": mode_label, "label": mode_display, "icon": icon,
+                                        "from": sname, "to": dest_name,
+                                        "distance_km": round(hop_dist, 2),
+                                        "duration_minutes": round(hop_dist * time_per_km),
+                                        "fare": ride_total, "per_person": pp, "group_capacity": capacity,
+                                        "from_lat": s_lat, "from_lng": s_lng,
+                                        "to_lat": dest_lat, "to_lng": dest_lng,
+                                    })
+                            if fallback_options:
+                                break
+
                     # Build the transit option
                     topt = {
                         "mode": "bus_ordinary", "label": f"Bus {rn}", "icon": "\U0001f68c",
@@ -809,6 +878,9 @@ class TripSegmentBuilder:
                         "transit_type": "bus",
                         "path": shape_path or full_shape or self._interpolate(s_lat, s_lng, t_lat, t_lng),
                         "next_transit": next_transit,
+                        "is_running": is_running,
+                        "time_status": time_status,
+                        "alternative_options": fallback_options,
                     }
                     all_transit.append(topt)
 
@@ -831,6 +903,9 @@ class TripSegmentBuilder:
                             "transit_type": "bus",
                             "path": shape_path or full_shape or self._interpolate(s_lat, s_lng, t_lat, t_lng),
                             "next_transit": next_transit,
+                            "is_running": is_running,
+                            "time_status": time_status,
+                            "alternative_options": fallback_options,
                         }
                         all_transit.append(ac_topt)
 
@@ -903,6 +978,23 @@ class TripSegmentBuilder:
                     "path": metro_path,
                     "next_transit": metro_next_transit,
                 })
+
+        # === WALK FROM STOP (standalone hop option) ===
+        if stop_dist_to_dest <= 2.0:
+            all_transit.append({
+                "mode": "walk", "label": "Walk to Destination", "icon": "\U0001f6b6",
+                "from": sname, "to": dest_name,
+                "distance_km": round(stop_dist_to_dest, 2),
+                "duration_minutes": round(stop_dist_to_dest * 12),
+                "fare": 0, "per_person": 0,
+                "from_lat": _safe(s_lat), "from_lng": _safe(s_lng),
+                "to_lat": dest_lat, "to_lng": dest_lng,
+                "arrives_at_stop": False,
+                "transit_type": "walk",
+                "path": self._interpolate(s_lat, s_lng, dest_lat, dest_lng, num_points=8),
+                "next_transit": [],
+                "final_options": [],
+            })
 
         # === TRAIN TRANSIT ===
         if stop["type"] == "railway" and dest_rail and is_long_dist:
@@ -1042,7 +1134,10 @@ class TripSegmentBuilder:
         key = str(route_number).strip().upper()
         if key not in self._shape_cache:
             _g = _ensure_gtfs()
-            self._shape_cache[key] = _g.get_shape_path_for_route(route_number) if _g else None
+            result = _g.get_shape_path_for_route(route_number) if _g else None
+            if not result and _g:
+                result = _g.get_shape_path_for_route(route_number.split(" ")[0]) if _g else None
+            self._shape_cache[key] = result
         return self._shape_cache[key]
 
     def _cached_stops_toward(self, route_number, from_lat, from_lng, dest_lat, dest_lng, max_stops=3):
@@ -1056,7 +1151,13 @@ class TripSegmentBuilder:
         key = f"{from_name}|{to_name}"
         if key not in self._shape_between_cache:
             _g = _ensure_gtfs()
-            self._shape_between_cache[key] = _g.get_shape_between_stops(from_name, to_name) if _g else None
+            result = _g.get_shape_between_stops(from_name, to_name) if _g else None
+            if not result and _g:
+                resolved_from = _g._resolve_name(from_name) if hasattr(_g, '_resolve_name') else from_name
+                resolved_to = _g._resolve_name(to_name) if hasattr(_g, '_resolve_name') else to_name
+                if resolved_from and resolved_to and (resolved_from != from_name.lower() or resolved_to != to_name.lower()):
+                    result = _g.get_shape_between_stops(resolved_from, resolved_to)
+            self._shape_between_cache[key] = result
         return self._shape_between_cache[key]
 
     def _clear_caches(self):
@@ -1122,6 +1223,11 @@ class TripSegmentBuilder:
                     group_size, budget, dest_nearby_metro, ride_types, n_name2, depth=depth_left - 1,
                     visited_stops=visited.copy()
                 )
+            bus_status2 = _is_bus_running_now(rn2)
+            is_running2 = bus_status2.get("is_running", True)
+            time_status2 = ""
+            if not is_running2:
+                time_status2 = bus_status2.get("message", "Not running at this time")
             return {
                 "mode": "bus_ordinary", "label": f"Bus {rn2}", "icon": "\U0001f68c",
                 "route_number": rn2, "from": stop_name, "to": n_name2,
@@ -1134,6 +1240,8 @@ class TripSegmentBuilder:
                 "bus_times": [{"departure_time": t, "route": rn2} for t in next_deps2[:3]],
                 "next_transit": nt2_next,
                 "final_options": nt2_final,
+                "is_running": is_running2,
+                "time_status": time_status2,
             }
 
         # STEP 1: buses at SAME arrival stop (most common: get off bus A, board bus B at same stop)
