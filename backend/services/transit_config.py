@@ -75,44 +75,56 @@ def _route_goes_toward_dest(shape_path: list, stop_lat: float, stop_lng: float, 
                              route_name: str = "", gtfs_ref=None) -> bool:
     if not shape_path or len(shape_path) < 2:
         return True
-    min_dist = float('inf')
-    closest_idx = 0
-    for i, (lat, lng) in enumerate(shape_path):
-        dlat = lat - stop_lat
-        dlng = lng - stop_lng
-        d = math.sqrt(dlat*dlat + dlng*dlng)
-        if d < min_dist:
-            min_dist = d
-            closest_idx = i
-    if closest_idx >= len(shape_path) - 2:
-        return False
-    next_idx = min(closest_idx + 3, len(shape_path) - 1)
-    shape_dlat = shape_path[next_idx][0] - shape_path[closest_idx][0]
-    shape_dlng = shape_path[next_idx][1] - shape_path[closest_idx][1]
-    dest_dlat = dest_lat - stop_lat
-    dest_dlng = dest_lng - stop_lng
-    s_len = math.sqrt(shape_dlat*shape_dlat + shape_dlng*shape_dlng)
-    d_len = math.sqrt(dest_dlat*dest_dlat + dest_dlng*dest_dlng)
+    end_idx = len(shape_path) - 1
+    direct_dist = _haversine_dist(stop_lat, stop_lng, dest_lat, dest_lng)
+    start_dist = _haversine_dist(shape_path[0][0], shape_path[0][1], dest_lat, dest_lng)
+    end_dist = _haversine_dist(shape_path[end_idx][0], shape_path[end_idx][1], dest_lat, dest_lng)
+
+    # Route endpoint is closer to dest than source
+    if start_dist < direct_dist or end_dist < direct_dist:
+        return True
+
+    # Source is near route start: check forward direction
+    dist_to_start = _haversine_dist(stop_lat, stop_lng, shape_path[0][0], shape_path[0][1])
+    dist_to_end = _haversine_dist(stop_lat, stop_lng, shape_path[end_idx][0], shape_path[end_idx][1])
+
+    if dist_to_start < 0.5:
+        # Route starts at/near source; check if it goes toward dest
+        n = min(3, end_idx)
+        sd = (shape_path[n][0] - shape_path[0][0], shape_path[n][1] - shape_path[0][1])
+    elif dist_to_end < 0.5:
+        # Route ends at/near source; check approach direction
+        p = max(end_idx - 3, 0)
+        sd = (shape_path[end_idx][0] - shape_path[p][0], shape_path[end_idx][1] - shape_path[p][1])
+    else:
+        # Source is in middle of route; find closest point and check forward direction
+        min_dist = float('inf')
+        closest_idx = 0
+        for i, (lat, lng) in enumerate(shape_path):
+            d = math.sqrt((lat - stop_lat)**2 + (lng - stop_lng)**2)
+            if d < min_dist:
+                min_dist = d
+                closest_idx = i
+        n = min(closest_idx + 3, end_idx)
+        sd = (shape_path[n][0] - shape_path[closest_idx][0], shape_path[n][1] - shape_path[closest_idx][1])
+
+    dd = (dest_lat - stop_lat, dest_lng - stop_lng)
+    s_len = math.sqrt(sd[0]**2 + sd[1]**2)
+    d_len = math.sqrt(dd[0]**2 + dd[1]**2)
     if s_len < 0.0001 or d_len < 0.0001:
         return True
-    cos_angle = (shape_dlat*dest_dlat + shape_dlng*dest_dlng) / (s_len * d_len)
-    direct_dist = _haversine_dist(stop_lat, stop_lng, dest_lat, dest_lng)
-    if direct_dist < 2.0:
-        pass
-    elif cos_angle < 0.5:
-        if route_name and gtfs_ref:
-            route_stops = gtfs_ref.get_route_stops(route_name, limit=50)
-            for rs in route_stops:
-                rs_lower = rs.get("stop_name", "").lower()
-                for hub in _MAJOR_HUBS:
-                    if hub in rs_lower:
-                        return True
-        return False
-    end_idx = len(shape_path) - 1
-    end_dist = _haversine_dist(shape_path[end_idx][0], shape_path[end_idx][1], dest_lat, dest_lng)
-    if end_dist > direct_dist * 1.2:
-        return False
-    return True
+    cos_angle = (sd[0]*dd[0] + sd[1]*dd[1]) / (s_len * d_len)
+    if cos_angle >= 0.3:
+        return True
+    # Poor angle: check if route passes through a major hub
+    if route_name and gtfs_ref:
+        route_stops = gtfs_ref.get_route_stops(route_name, limit=50)
+        for rs in route_stops:
+            rs_lower = rs.get("stop_name", "").lower()
+            for hub in _MAJOR_HUBS:
+                if hub in rs_lower:
+                    return True
+    return False
 
 def _gtfs_buses_at_stop(stop_name) -> list:
     if not isinstance(stop_name, str):

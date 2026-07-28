@@ -660,6 +660,8 @@ export default function AToBPanel({ onRouteGeometry, onNewsUpdate }: AToBPanelPr
                     segments={segments}
                     sourceName={sourceQuery || 'Current Location'}
                     destName={destQuery || 'Destination'}
+                    destLat={destLocation?.[0]}
+                    destLng={destLocation?.[1]}
                     onRouteGeometry={onRouteGeometry}
                   />
                 </div>

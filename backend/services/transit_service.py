@@ -579,6 +579,12 @@ class TransitService:
             group_size, budget,
         )
 
+    def get_single_segment(self, from_lat, from_lng, from_name, dest_lat, dest_lng, dest_name, group_size=1, budget=None, segment_index=0, arrival_seconds=None):
+        return self.segment_builder._build_single_segment(
+            from_lat, from_lng, from_name, dest_lat, dest_lng, dest_name,
+            group_size, budget, segment_index, arrival_seconds=arrival_seconds,
+        )
+
     @property
     def astar_graph(self):
         if self._astar_graph_instance is None:

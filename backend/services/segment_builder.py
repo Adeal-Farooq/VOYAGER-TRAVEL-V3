@@ -753,9 +753,9 @@ class TripSegmentBuilder:
         return entry
 
     def _add_transit_options(self, entry: dict, from_lat: float, from_lng: float,
-                              dest_lat: float, dest_lng: float, dest_name: str,
-                              group_size: int, budget: float, dest_nearby_bus: list, dest_nearby_metro: list,
-                              dest_rail: list, is_long_dist: bool):
+                               dest_lat: float, dest_lng: float, dest_name: str,
+                               group_size: int, budget: float, dest_nearby_bus: list, dest_nearby_metro: list,
+                               dest_rail: list, is_long_dist: bool, arrival_seconds: int = None):
         """Add transit options to a destination entry. Returns list of transit_option dicts."""
         stop = entry["stop"]
         s_lat, s_lng = stop["lat"], stop["lng"]
@@ -788,7 +788,7 @@ class TripSegmentBuilder:
                         arrival_name = arrival["stop_name"]
                         current_to_dest = _safe(self._haversine(s_lat, s_lng, dest_lat, dest_lng))
                         arrival_to_dest = _safe(self._haversine(t_lat, t_lng, dest_lat, dest_lng))
-                        if arrival_to_dest > current_to_dest * 0.85:
+                        if arrival_to_dest > current_to_dest + 0.5:
                             continue
                         arrives_at_stop = True
                         shape_path = self._cached_shape_between(sname, arrival_name)
@@ -803,6 +803,9 @@ class TripSegmentBuilder:
                     total = bf * group_size
                     if budget and total > budget: continue
                     bus_times_list = [{"departure_time": t, "route": rn} for t in next_deps]
+                    if arrival_seconds is not None:
+                        def _ts(s): parts=s.split(':'); return int(parts[0])*3600+int(parts[1])*60+int(parts[2])
+                        bus_times_list = [bt for bt in bus_times_list if _ts(bt["departure_time"]) >= arrival_seconds]
 
                     # Use GTFS actual timing if available
                     gtfs_travel_time = None
@@ -876,7 +879,7 @@ class TripSegmentBuilder:
                         "arrives_at_stop": arrives_at_stop,
                         "bus_times": bus_times_list[:5],
                         "transit_type": "bus",
-                        "path": shape_path or full_shape or self._interpolate(s_lat, s_lng, t_lat, t_lng),
+                        "path": shape_path or self._interpolate(s_lat, s_lng, t_lat, t_lng),
                         "next_transit": next_transit,
                         "is_running": is_running,
                         "time_status": time_status,
@@ -901,7 +904,7 @@ class TripSegmentBuilder:
                             "arrives_at_stop": arrives_at_stop,
                             "bus_times": bus_times_list[:5],
                             "transit_type": "bus",
-                            "path": shape_path or full_shape or self._interpolate(s_lat, s_lng, t_lat, t_lng),
+                            "path": shape_path or self._interpolate(s_lat, s_lng, t_lat, t_lng),
                             "next_transit": next_transit,
                             "is_running": is_running,
                             "time_status": time_status,
@@ -1206,13 +1209,13 @@ class TripSegmentBuilder:
             n_name2 = arrive2["stop_name"]
             n_dist2 = _safe(self._haversine(n_lat2, n_lng2, dest_lat, dest_lng))
             arrival_hub = any(h in n_name2.lower() for h in _MAJOR_HUBS)
-            if not arrival_hub and n_dist2 >= dropoff_dist - 0.5:
+            if not arrival_hub and n_dist2 > dropoff_dist * 1.1:
                 return None
             bf2 = max(6, round(db.get_bmtc_ordinary_fare(t2_dist) or 6))
             t2_total = bf2 * group_size
             if budget and t2_total > budget:
                 return None
-            nt2_path = self._cached_shape_between(stop_name, n_name2) or shape_path2 or self._interpolate(stop_lat, stop_lng, n_lat2, n_lng2)
+            nt2_path = self._cached_shape_between(stop_name, n_name2) or self._interpolate(stop_lat, stop_lng, n_lat2, n_lng2)
             nt2_final = []
             if n_dist2 <= 2.0:
                 nt2_final = _add_final_walk(n_name2, n_lat2, n_lng2, n_dist2)
@@ -1332,7 +1335,8 @@ class TripSegmentBuilder:
 
     def _build_single_segment(self, from_lat: float, from_lng: float, from_name: str,
                                dest_lat: float, dest_lng: float, dest_name: str,
-                               group_size: int, budget: float, segment_index: int) -> dict:
+                               group_size: int, budget: float, segment_index: int,
+                               arrival_seconds: int = None) -> dict:
         """Build a single segment from 'from' location: direct options + nearby stops with reach + transit options."""
         direct_dist = _safe(self._haversine(from_lat, from_lng, dest_lat, dest_lng))
         _ensure_gtfs()
@@ -1371,11 +1375,10 @@ class TripSegmentBuilder:
             has_gtfs = _has_gtfs_route(sname)
             if not has_gtfs and stop_dist > 2.0:
                 continue
-            # Skip if stop is much farther from destination AND not a hub
+            # Only skip stop if it's clearly going in the wrong direction (3x+ farther from dest)
             current_to_dest = _safe(self._haversine(from_lat, from_lng, dest_lat, dest_lng))
             stop_to_dest = _safe(self._haversine(stop["lat"], stop["lng"], dest_lat, dest_lng))
-            is_stop_hub = any(h in sname.lower() for h in _MAJOR_HUBS)
-            if not is_stop_hub and stop_to_dest > current_to_dest * 1.5 and stop_dist > 1.0:
+            if stop_to_dest > current_to_dest * 3.0 and stop_dist > 2.0:
                 continue
             entry = self._add_reach_options(from_lat, from_lng, from_name,
                                              sname, stop["lat"], stop["lng"], "bus",
@@ -1384,7 +1387,7 @@ class TripSegmentBuilder:
                 self._add_transit_options(entry, from_lat, from_lng,
                                            dest_lat, dest_lng, dest_name,
                                            group_size, budget, dest_nearby_bus, dest_nearby_metro,
-                                           dest_rail, is_long_dist)
+                                           dest_rail, is_long_dist, arrival_seconds=arrival_seconds)
                 all_entries.append(entry)
 
         # Metro stations
@@ -1401,7 +1404,7 @@ class TripSegmentBuilder:
                 self._add_transit_options(entry, from_lat, from_lng,
                                            dest_lat, dest_lng, dest_name,
                                            group_size, budget, dest_nearby_bus, dest_nearby_metro,
-                                           dest_rail, is_long_dist)
+                                           dest_rail, is_long_dist, arrival_seconds=arrival_seconds)
                 all_entries.append(entry)
 
         # Railway stations
@@ -1418,7 +1421,7 @@ class TripSegmentBuilder:
                     self._add_transit_options(entry, from_lat, from_lng,
                                                dest_lat, dest_lng, dest_name,
                                                group_size, budget, dest_nearby_bus, dest_nearby_metro,
-                                               dest_rail, is_long_dist)
+                                               dest_rail, is_long_dist, arrival_seconds=arrival_seconds)
                     all_entries.append(entry)
 
         # Filter destinations: remove those with no reach options AND no transit options
@@ -1446,12 +1449,6 @@ class TripSegmentBuilder:
         logger.info(f"  _build_single_segment[{segment_index}] from={from_name} {elapsed:.1f}s dests={len(segment['destinations'])} rpaths={len(segment['route_paths'])}")
         return segment
 
-    def _is_hub_or_close_to_dest(self, lat, lng, dest_lat, dest_lng, stop_name=""):
-        dist = _safe(self._haversine(lat, lng, dest_lat, dest_lng))
-        if dist <= 5.0:
-            return True
-        return any(h in stop_name.lower() for h in _MAJOR_HUBS)
-
     def get_all_segments(self, from_lat: float, from_lng: float, from_name: str,
                           dest_lat: float, dest_lng: float, dest_name: str,
                           group_size: int = 1, budget: float = None, max_depth: int = 3) -> dict:
@@ -1465,66 +1462,11 @@ class TripSegmentBuilder:
 
         seg_start = time.time()
         segments = []
-        visited_pts = set()
 
         seg0 = self._build_single_segment(from_lat, from_lng, from_name,
                                            dest_lat, dest_lng, dest_name,
                                            group_size, budget, 0)
         segments.append(seg0)
-        next_from_map = {}
-
-        for dest_entry in seg0["destinations"]:
-            for topt in dest_entry.get("transit_options", []):
-                if topt.get("to_lat") and topt.get("to_lng"):
-                    tlat, tlng = topt["to_lat"], topt["to_lng"]
-                    ardist = _safe(self._haversine(tlat, tlng, dest_lat, dest_lng))
-                    if 0.05 < ardist <= 50:
-                        nk = f"{round(tlat,4)},{round(tlng,4)}"
-                        stop_name = topt.get("to", "")
-                        if nk not in visited_pts and nk not in next_from_map and self._is_hub_or_close_to_dest(tlat, tlng, dest_lat, dest_lng, stop_name):
-                            if len(next_from_map) < 3:  # Limit to 3 parallel next segments
-                                next_from_map[nk] = (tlat, tlng, stop_name)
-                                topt["needs_next_segment"] = True
-
-        depth = 1
-        logger.info(f"  next_from_map has {len(next_from_map)} entries for depth={depth}")
-        while next_from_map and depth < max_depth and len(segments) < 4:
-            new_map = {}
-            for nk, (nl, ng, nn) in next_from_map.items():
-                if nk in visited_pts:
-                    continue
-                visited_pts.add(nk)
-                next_seg = self._build_single_segment(nl, ng, nn,
-                                                       dest_lat, dest_lng, dest_name,
-                                                       group_size, budget, depth)
-                segments.append(next_seg)
-                seg_arr_idx = len(segments) - 1
-
-                for prev_seg in segments:
-                    if prev_seg["segment_index"] >= depth:
-                        continue
-                    for de in prev_seg["destinations"]:
-                        for topt in de.get("transit_options", []):
-                            tmk = f"{round(topt.get('to_lat',0),4)},{round(topt.get('to_lng',0),4)}"
-                            if tmk == nk:
-                                topt["next_segment_index"] = seg_arr_idx
-                                topt.pop("needs_next_segment", None)
-
-                for de in next_seg["destinations"]:
-                    for topt in de.get("transit_options", []):
-                        if topt.get("to_lat") and topt.get("to_lng"):
-                            tlat2, tlng2 = topt["to_lat"], topt["to_lng"]
-                            ardist2 = _safe(self._haversine(tlat2, tlng2, dest_lat, dest_lng))
-                            if 0.05 < ardist2 <= 50:
-                                tmk2 = f"{round(tlat2,4)},{round(tlng2,4)}"
-                                stop_name2 = topt.get("to", "")
-                                if tmk2 not in visited_pts and tmk2 not in new_map and self._is_hub_or_close_to_dest(tlat2, tlng2, dest_lat, dest_lng, stop_name2):
-                                    if len(new_map) < 2:  # Limit deeper builds to 2
-                                        new_map[tmk2] = (tlat2, tlng2, stop_name2)
-                                        topt["needs_next_segment"] = True
-
-            next_from_map = new_map
-            depth += 1
 
         result = {
             "source": {"lat": from_lat, "lng": from_lng, "name": from_name},

@@ -444,6 +444,12 @@ class GTFSLoader:
                 if route not in route_times:
                     route_times[route] = []
                 route_times[route].append(dep_time)
+        if not route_times:
+            route_times = {}
+            for dep_time, route in times:
+                if route not in route_times:
+                    route_times[route] = []
+                route_times[route].append(dep_time)
         sorted_routes = sorted(route_times.items(), key=lambda x: x[1][0] if x[1] else '')
         result = []
         for rn, times_list in sorted_routes:

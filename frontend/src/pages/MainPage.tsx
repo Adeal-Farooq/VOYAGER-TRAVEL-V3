@@ -111,7 +111,12 @@ export default function MainPage() {
         <div style={{ flex: 1, overflowY: 'auto', padding: mode === 'search' ? 0 : '14px 16px' }}>
           {mode === 'search' && (
             <SearchPanel
-              onSelectPlace={(place) => { setSelectedPlace(place); handleViewOnMap(place) }}
+              onSelectPlace={(place) => {
+                setSelectedPlace(place)
+                setDstLoc([place.lat, place.lng])
+                setDstQ(place.name)
+                handleViewOnMap(place)
+              }}
               onViewOnMap={handleViewOnMap}
               onViewDetails={handleViewDetails}
               onNavigateToPlace={handleNavigateToPlace}
