@@ -16,7 +16,7 @@ from backend.services.clients.google_maps_client import google_maps_client
 from backend.services.clients.weather_client import weather_client
 from backend.services.scrapers.news_scraper import news_scraper
 from backend.services.scrapers.ddg_scraper import ddg_scraper
-from backend.services.langgraph.tools.search_tools import search_places, search_nearby, get_suggestions
+from backend.services.langgraph.tools.search_tools import search_nearby, get_suggestions
 from backend.services.langgraph.tools.review_tools import get_place_reviews, get_place_photos
 from backend.services.langgraph.tools.pricing_tools import get_ride_prices, estimate_fuel_cost, get_hotel_prices
 from backend.services.langgraph.tools.news_tools import get_travel_news, get_traffic_news, get_area_events
@@ -85,18 +85,6 @@ class LLMAgent:
             except Exception:
                 continue
         raise Exception("All Gemini models failed")
-
-    async def search_places_ai(self, query: str, lat: float = None, lng: float = None) -> list[dict]:
-        """Search real places via SerpAPI/Reddit."""
-        results = await search_places(query, lat, lng, limit=8)
-        if results:
-            for r in results:
-                r["reliability_score"] = round(min((r.get("rating", 0) or 0) / 5, 1.0), 2) if r.get("rating", 0) > 0 else 0.5
-                r["is_recommended"] = (r.get("rating", 0) or 0) >= 3.5
-                r["review_summary"] = r.get("review_summary", "")
-                r["address"] = r.get("address", "")
-            return results[:15]
-        return []
 
     async def verify_place(self, name: str, address: str = None) -> dict:
         """Verify place using real reviews."""
