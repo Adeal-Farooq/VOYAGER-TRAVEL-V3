@@ -72,6 +72,7 @@ class GTFSService:
                 with open(self._cache_path, "rb") as fh:
                     self._data = pickle_load(fh)
                 print(f"[gtfs] loaded pickle {self._cache_path.name} in {time.perf_counter() - t0:.2f}s")
+                self._clean_route_names()
                 self._rebuild_name_map()
                 return
             except Exception as exc:  # corrupt cache -> fall through to raw load
@@ -87,6 +88,39 @@ class GTFSService:
         with open(target, "wb") as fh:
             pickle.dump(self._data, fh, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"[gtfs] saved pickle -> {target}")
+
+    def _clean_route_names(self) -> None:
+        """Normalize route names across every index (PROMPT_1 §4.1).
+
+        Cleaning is applied at GTFS load, not just raw-parse time — the
+        committed pickle was built by an older pipeline and can carry leaked
+        suffix garbage (e.g. "DSC HAL-CVR" -> "DSC"). Shape ids are untouched.
+        """
+        d = self._data
+        map_old = {r: clean_route_short_name(r) for r in d["route_shapes"]}
+        cleaned = {new: old for old, new in map_old.items() if new != old}
+        if not cleaned:
+            return
+        new_route_shapes: dict[str, list[str]] = {}
+        new_by_route: dict[str, list[tuple[str, str]]] = {}
+        for old, new in map_old.items():
+            merged = new_route_shapes.get(new, [])
+            for sid in d["route_shapes"][old]:
+                if sid not in merged:
+                    merged.append(sid)
+            new_route_shapes[new] = merged
+            new_by_route[new] = d["stop_times_by_route"].get(new, []) + d["stop_times_by_route"].get(old, [])
+        d["route_shapes"] = new_route_shapes
+        d["stop_times_by_route"] = new_by_route
+        d["stop_times"] = {
+            sname: [(t, clean_route_short_name(r)) for t, r in entries]
+            for sname, entries in d["stop_times"].items()
+        }
+        d["route_id_to_name"] = {
+            rid: clean_route_short_name(name) for rid, name in d["route_id_to_name"].items()
+        }
+        print(f"[gtfs] cleaned {len(cleaned)} route names (e.g. {list(cleaned.items())[:3]})")
+        self.save_pickle()
 
     def _rebuild_name_map(self) -> None:
         """Persist name_map from master stop CSV if not already in the pickle."""
