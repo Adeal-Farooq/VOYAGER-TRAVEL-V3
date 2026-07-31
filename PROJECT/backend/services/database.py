@@ -91,32 +91,47 @@ class TransitDatabase:
         return [clean_route_short_name(t) for t in raw.split(",") if t.strip()]
 
     def _load_metro(self) -> None:
+        self._metro_edge_pairs: list[tuple[str, str, float, str]] = []
         try:
             with open(config.METRO_NETWORK_PATH, encoding="utf-8-sig") as fh:
-                rows = csv.DictReader(fh)
-                for r in rows:
-                    line = str(r.get("line", "")).strip()
-                    if line not in config.OPERATIONAL_METRO_LINES:
-                        continue  # Yellow/Blue under construction — excluded
-                    name = str(r.get("station_name", "")).strip()
-                    if not name:
-                        continue
-                    try:
-                        lat, lng = float(r["latitude"]), float(r["longitude"])
-                    except (KeyError, ValueError):
-                        continue
-                    self._metro.append(
-                        MetroStation(
-                            name=name,
-                            lat=lat,
-                            lng=lng,
-                            lines=[line],
-                            is_hub=bool(int(r.get("is_interchange", 0) or 0)),
-                        )
+                rows = list(csv.DictReader(fh))
+            code_to_name = {}
+            for r in rows:
+                line = str(r.get("line", "")).strip()
+                if line not in config.OPERATIONAL_METRO_LINES:
+                    continue  # Yellow/Blue under construction — excluded
+                code_to_name[str(r.get("station_code", "")).strip()] = str(r.get("station_name", "")).strip()
+            for r in rows:
+                line = str(r.get("line", "")).strip()
+                if line not in config.OPERATIONAL_METRO_LINES:
+                    continue
+                name = str(r.get("station_name", "")).strip()
+                if not name:
+                    continue
+                try:
+                    lat, lng = float(r["latitude"]), float(r["longitude"])
+                except (KeyError, ValueError):
+                    continue
+                self._metro.append(
+                    MetroStation(
+                        name=name,
+                        lat=lat,
+                        lng=lng,
+                        lines=[line],
+                        is_hub=bool(int(r.get("is_interchange", 0) or 0)),
                     )
+                )
+                nxt = str(r.get("next_station_code", "")).strip()
+                if nxt and nxt in code_to_name and code_to_name[nxt] != name:
+                    try:
+                        dist_km = float(r.get("distance_to_next_km", 0.0) or 0.0)
+                    except ValueError:
+                        dist_km = 0.0
+                    self._metro_edge_pairs.append((name, code_to_name[nxt], dist_km, line))
         except FileNotFoundError:
             print(f"[db] missing {config.METRO_NETWORK_PATH.name} — metro empty")
-        print(f"[db] loaded {len(self._metro)} metro stations (purple+green)")
+        print(f"[db] loaded {len(self._metro)} metro stations (purple+green), "
+              f"{len(self._metro_edge_pairs)} adjacent edges")
 
     def _load_rail(self) -> None:
         try:
@@ -171,6 +186,10 @@ class TransitDatabase:
         if line is None:
             return self._metro
         return [s for s in self._metro if line in s.lines]
+
+    def metro_edges(self) -> list[tuple[str, str, float, str]]:
+        """Adjacent-station edges: (station_a, station_b, dist_km, line)."""
+        return self._metro_edge_pairs
 
     def all_bus_stops(self) -> list[BusStop]:
         return self._bus

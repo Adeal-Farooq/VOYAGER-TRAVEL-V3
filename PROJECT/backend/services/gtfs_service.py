@@ -55,8 +55,10 @@ class GTFSService:
         self._data: dict | None = None
         self._resolve_cache: dict[str, str | None] = {}
         self._word_index: dict[str, set[str]] | None = None
+        self._trigram: dict[str, list[str]] | None = None
         self._termini_cache: dict[str, str] = {}
         self._shape_stops: dict[str, list[tuple[int, str]]] | None = None
+        self._stop_times_sorted: dict[str, list[tuple[int, str, str]]] = {}
 
     # ------------------------------------------------------------- loading
     @property
@@ -74,6 +76,8 @@ class GTFSService:
                 print(f"[gtfs] loaded pickle {self._cache_path.name} in {time.perf_counter() - t0:.2f}s")
                 self._clean_route_names()
                 self._rebuild_name_map()
+                cached = self.data.get("name_map") or {}
+                self._resolve_cache.update(cached)
                 return
             except Exception as exc:  # corrupt cache -> fall through to raw load
                 print(f"[gtfs] pickle load failed ({exc}); rebuilding from raw GTFS")
@@ -135,12 +139,12 @@ class GTFSService:
     def _resolve_master_names(self) -> dict[str, str]:
         names = self._master_stop_names()
         t0 = time.perf_counter()
-        resolved: dict[str, str] = {}
+        resolved: dict[str, str | None] = {}
         for raw in names:
             got = self._fast_fuzzy_match(raw)
-            if got:
-                resolved[_normalize(raw)] = got
-        print(f"[gtfs] pre-resolved {len(resolved)}/{len(names)} master stop names in "
+            resolved[_normalize(raw)] = got  # store failures (None) too — cached resolution
+        hits = sum(1 for v in resolved.values() if v)
+        print(f"[gtfs] pre-resolved {hits}/{len(names)} master stop names in "
               f"{time.perf_counter() - t0:.2f}s")
         return resolved
 
@@ -246,10 +250,37 @@ class GTFSService:
         stops = self.data["stops_by_name"]
         if norm in stops:
             return norm
-        mapped = self.data.get("name_map", {}).get(norm)
-        if mapped and mapped in stops:
-            return mapped
+        name_map = self.data.get("name_map", {})
+        if norm in name_map:
+            return name_map[norm]  # cached resolved name OR cached None (no match)
         return self._fast_fuzzy_match(norm)
+
+    def shape_stop_sequence(self, shape_id: str) -> list[tuple[int, str]]:
+        """Ordered (position, stop_name) list along a shape (for graph edges)."""
+        return self._shape_stops_index().get(shape_id, [])
+
+    def pre_resolve_names(self, names: Iterable[str]) -> int:
+        """Resolve arbitrary display names and persist the mapping in name_map.
+
+        Covers names the master-CSV pre-resolve never saw (e.g. DB bus-stop
+        display names with locality suffixes). Unresolvable names are stored
+        as None so future calls are O(1) cache hits instead of re-running
+        fuzzy matching. Returns the number of new keys written.
+        """
+        name_map = self.data.setdefault("name_map", {})
+        fresh: dict[str, str | None] = {}
+        for raw in names:
+            norm = _normalize(raw)
+            if norm in name_map or norm in self._resolve_cache:
+                continue
+            got = self._fast_fuzzy_match(norm)
+            fresh[norm] = got
+            self._resolve_cache[norm] = got
+        if fresh:
+            name_map.update(fresh)
+            self.save_pickle()
+            print(f"[gtfs] pre-resolved {len(fresh)} extra names -> pickle saved")
+        return len(fresh)
 
     def _fast_fuzzy_match(self, name: str) -> str | None:
         stops = self.data["stops_by_name"]
@@ -275,8 +306,10 @@ class GTFSService:
             return best
         trig = {norm[i : i + 3] for i in range(max(0, len(norm) - 2))}
         if trig:
-            pool = [s for s in stops if trig & {s[i : i + 3] for i in range(max(0, len(s) - 2))}]
-            cands = get_close_matches(norm, pool, n=1, cutoff=0.80)
+            pool = set()
+            for g in trig:
+                pool.update(self._trigram_index().get(g, ()))
+            cands = get_close_matches(norm, list(pool), n=1, cutoff=0.80)
             if cands:
                 return cands[0]
         if len(norm) >= 4:
@@ -293,6 +326,18 @@ class GTFSService:
             for w in sw:
                 idx.setdefault(w, []).append((s, sw))
         self._word_index = idx
+        return idx
+
+    def _trigram_index(self) -> dict[str, list[str]]:
+        """3-char n-gram -> stop names, so the trigram prefilter never scans
+        every stop per lookup (was the 19s graph-build bottleneck)."""
+        if self._trigram is not None:
+            return self._trigram
+        idx: dict[str, list[str]] = {}
+        for s in self.data["stops_by_name"]:
+            for g in {s[i : i + 3] for i in range(max(0, len(s) - 2))}:
+                idx.setdefault(g, []).append(s)
+        self._trigram = idx
         return idx
 
     def get_routes_at_stop(
@@ -322,6 +367,51 @@ class GTFSService:
             )
         out.sort(key=lambda d: (d.departure_minutes, d.route_number))
         return out
+
+    def earliest_departures(self, stop_name: str, after_time: str | None = None,
+                            max_n: int = 6, route_filter: set[str] | None = None,
+                            window_min: int = 180) -> list[RouteDeparture]:
+        """Fast schedule lookup for leg assembly.
+
+        Uses a per-stop cached sorted list of (minutes, time_str, route) so we
+        can stop early instead of materializing every departure object.
+        Returns up to max_n departures sorted by time (route_filter applied).
+        """
+        resolved = self.resolve_stop_name(stop_name)
+        if not resolved:
+            return []
+        after_min = _to_minutes(after_time) if after_time else 0
+        stop_list = self._sorted_stop_times(resolved)
+        hits: list[RouteDeparture] = []
+        for mins, time_str, route in stop_list:
+            if mins < after_min:
+                continue
+            if route_filter is not None and route not in route_filter:
+                continue
+            if mins > after_min + window_min and hits:
+                break
+            shape_ids = self.data["route_shapes"].get(route, ())
+            hits.append(RouteDeparture(
+                route_id=route, route_number=route, stop_name=resolved,
+                scheduled_departure=time_str, departure_minutes=mins,
+                destination_name=self._route_terminus(route),
+                trip_id="", shape_id=shape_ids[0] if shape_ids else "",
+            ))
+            if len(hits) >= max_n:
+                break
+        return hits
+
+    def _sorted_stop_times(self, resolved: str) -> list[tuple[int, str, str]]:
+        """Cached sorted (minutes, time_str, route) for a resolved stop."""
+        cached = self._stop_times_sorted.get(resolved)
+        if cached is not None:
+            return cached
+        items = [(mins, t, r)
+                 for t, r in self.data["stop_times"].get(resolved, ())
+                 for mins in (_to_minutes(t),)]
+        items.sort(key=lambda x: (x[0], x[2]))
+        self._stop_times_sorted[resolved] = items
+        return items
 
     def _route_terminus(self, route: str) -> str:
         if route in self._termini_cache:
