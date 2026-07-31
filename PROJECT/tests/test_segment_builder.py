@@ -191,3 +191,35 @@ def test_metro_interchange_offers_both_lines(builder):
     assert mg is not None
     assert mg["distanceKm"] > 1.0 and mg["durationMin"] > 1
     assert mg["geometrySource"] == "metro_line" and mg["geometry"]
+
+
+# --------------------------------------------------- long-haul bus->metro ride
+def test_long_haul_bus_to_metro_transfer(builder):
+    """Yelahanka -> MG Road should offer a direct bus to Majestic (Kempegowda Bus
+    Station) that is metro-transfer flagged, then metro to MG Road."""
+    resp = builder.build_segments(YELAHANKA_SCHOOL, MG_ROAD, group_size=1, budget=300,
+                                  current_time="2026-07-31T08:30:00+05:30")
+    transfers = [o for s in resp["segments"] for o in s["options"]
+                 if o.get("isMetroTransfer") and o["mode"] == "bus"]
+    assert transfers
+    # at least one direct ride reaches the Majestic corridor (KBS)
+    kbs = [o for o in transfers
+           if "kempegowda" in o["destinationStop"]["name"].lower()
+           or "ananda rao" in o["destinationStop"]["name"].lower()]
+    assert kbs
+    top = kbs[0]
+    assert top["status"] in ("scheduled", "not_running")
+    assert top["fare"] > 0
+    # geometry is the stop-to-stop slice, never the full route
+    assert top["geometrySource"] in ("gtfs_shape", "interpolated")
+    # and it chains into a metro at the interchange
+    nxt = builder.build_segment_next(
+        journey={"source": YELAHANKA_SCHOOL, "destination": MG_ROAD},
+        chosen_legs=[{"optionId": top["optionId"], "arrivalTime": top["arrivalTime"],
+                      "destinationStop": top["destinationStop"]["name"]}],
+        group_size=1, budget=300)
+    metros = [o for o in nxt["segments"][0]["options"] if o["mode"] == "metro"]
+    assert metros
+    mg = next((o for o in metros
+               if o["destinationStop"]["name"] == "Mahatma Gandhi Road"), None)
+    assert mg is not None  # Purple metro directly to MG Road

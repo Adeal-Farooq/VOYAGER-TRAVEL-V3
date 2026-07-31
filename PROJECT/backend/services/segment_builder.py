@@ -42,6 +42,7 @@ MAX_BOARD_BUS = 3
 MAX_BOARD_METRO = 2
 MAX_ROUTES_PER_STOP = 4
 MAX_ARRIVAL_STOPS_PER_ROUTE = 3
+MAX_METRO_TRANSFER = 2      # long-haul bus->metro interchange rides offered
 MAX_ANCHORS_SEG2 = 6
 MAX_SEG2_OPTIONS = 40
 MAX_PROBES = 6
@@ -393,7 +394,7 @@ class SegmentBuilder:
         from .fare_engine import bmtc_fare, kia_fare
 
         dep = self.gtfs.earliest_departures(board_node.name, _fmt(board_after),
-                                            max_n=8, window_min=DEP_WINDOW_MIN)
+                                            max_n=12, window_min=DEP_WINDOW_MIN)
         if not dep:
             dep = self.gtfs.get_routes_at_stop(board_node.name, _fmt(board_after))
         # distinct routes first, keep the earliest per route
@@ -401,7 +402,8 @@ class SegmentBuilder:
         for d in dep:
             if d.route_number not in by_route:
                 by_route[d.route_number] = d
-        routes = list(by_route.values())[:MAX_ROUTES_PER_STOP]
+        all_routes = list(by_route.values())
+        routes = all_routes[:MAX_ROUTES_PER_STOP]
 
         out: list[dict] = []
         for d in routes:
@@ -420,7 +422,45 @@ class SegmentBuilder:
                                             not_running=not_running)
                 if opt:
                     out.append(opt)
+        # long-haul bus -> metro interchange rides (checked over ALL routes, not
+        # just the short-hop-capped ones) — e.g. 285-M -> Kempegowda Bus Station
+        # (Majestic), then metro to dest. Kept deliberately small (earliest first).
+        transfer_added = 0
+        for d in all_routes:
+            if transfer_added >= MAX_METRO_TRANSFER:
+                break
+            if d.route_number in {r.route_number for r in routes}:
+                continue
+            not_running = (d.departure_minutes - board_after) > MAX_WAIT_MIN
+            forward = self._route_forward_stops(d.route_number, board_node.name,
+                                                dest_lat, dest_lng)
+            transfer = self._metro_transfer_stop(forward, board_node, dest_lat, dest_lng)
+            if transfer:
+                opt = self._bus_ride_option(board_node, d, transfer, dest_lat, dest_lng,
+                                            group_size, budget, connected_from, seg_num,
+                                            not_running=not_running)
+                if opt:
+                    opt["isMetroTransfer"] = True
+                    out.append(opt)
+                    transfer_added += 1
         return out
+
+    def _metro_transfer_stop(self, forward, board_node, dest_lat, dest_lng):
+        """Farthest forward stop on a route that sits near a metro station.
+
+        Lets a user ride the bus to a metro interchange (then metro to dest),
+        instead of only seeing the first few stops of the ride.
+        """
+        best = None
+        for i in range(MAX_ARRIVAL_STOPS_PER_ROUTE, len(forward)):
+            name, slat, slng = forward[i]
+            if not self._forward_progress(board_node.lat, board_node.lng,
+                                          dest_lat, dest_lng, slat, slng):
+                continue
+            near = self.db.metro_near(slat, slng, WALK_TO_BOARD_M)
+            if near:
+                best = (name, slat, slng)
+        return best
 
     def _bus_ride_option(self, board_node, dep, fwd, dest_lat, dest_lng,
                          group_size, budget, connected_from, seg_num,
@@ -464,6 +504,7 @@ class SegmentBuilder:
             "connectedFrom": connected_from,
             "transitOptionsFromThisStop": 0,
             "probeNext": [],
+            "isMetroTransfer": False,
             "exceedsBudget": exceeds,
         }
 
