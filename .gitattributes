@@ -1,0 +1,4 @@
+*.pkl filter=lfs diff=lfs merge=lfs -text
+*.zip filter=lfs diff=lfs merge=lfs -text
+data_cache/bmtc_gtfs/shapes.txt filter=lfs diff=lfs merge=lfs -text
+data_cache/bmtc_gtfs/stop_times.txt filter=lfs diff=lfs merge=lfs -text

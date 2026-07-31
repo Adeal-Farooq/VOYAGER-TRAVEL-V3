@@ -1,0 +1,35 @@
+# --- VOYAGER v2 PROJECT .gitignore ---
+# This repo is the fresh build. Commit data ASSETS (pickle, csv, json) but NOT raw GTFS or secrets.
+
+# Raw GTFS (~190MB) — NOT committed. The 67MB gtfs_cache.pkl derives everything.
+DATA_FOLDER/bmtc_gtfs/
+
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local SQLite fallback (if ever used in dev)
+*.db
+*.sqlite3
+
+# ML artifacts
+ml/models/
