@@ -423,14 +423,14 @@ class SegmentBuilder:
                 if opt:
                     out.append(opt)
         # long-haul bus -> metro interchange rides (checked over ALL routes, not
-        # just the short-hop-capped ones) — e.g. 285-M -> Kempegowda Bus Station
-        # (Majestic), then metro to dest. Kept deliberately small (earliest first).
+        # just the short-hop-capped ones) — e.g. 285 from Rajanukunte directly to
+        # Kempegowda Bus Station (Majestic), then metro to dest. Kept deliberately
+        # small (earliest first). Capped routes are NOT skipped: their transfer
+        # stop lies beyond the first few stops, so it's a distinct, valuable option.
         transfer_added = 0
         for d in all_routes:
             if transfer_added >= MAX_METRO_TRANSFER:
                 break
-            if d.route_number in {r.route_number for r in routes}:
-                continue
             not_running = (d.departure_minutes - board_after) > MAX_WAIT_MIN
             forward = self._route_forward_stops(d.route_number, board_node.name,
                                                 dest_lat, dest_lng)
@@ -619,8 +619,10 @@ class SegmentBuilder:
             names = [n for _p, n in seq]
             if from_stop in names and to_stop in names:
                 i, j = names.index(from_stop), names.index(to_stop)
-                step = 1 if i < j else -1
-                path = names[i:j + step:step]
+                lo, hi = min(i, j), max(i, j)
+                path = names[lo:hi + 1]
+                if j < i:
+                    path = path[::-1]
                 break
         for a, b in zip(path, path[1:]):
             ka, kb = f"bus:{a}", f"bus:{b}"

@@ -195,31 +195,75 @@ def test_metro_interchange_offers_both_lines(builder):
 
 # --------------------------------------------------- long-haul bus->metro ride
 def test_long_haul_bus_to_metro_transfer(builder):
-    """Yelahanka -> MG Road should offer a direct bus to Majestic (Kempegowda Bus
-    Station) that is metro-transfer flagged, then metro to MG Road."""
+    """Yelahanka -> MG Road should offer a direct bus to a metro interchange
+    (Kempegowda Bus Station / mg road metro etc.) that is metro-transfer
+    flagged, then metro to MG Road."""
     resp = builder.build_segments(YELAHANKA_SCHOOL, MG_ROAD, group_size=1, budget=300,
                                   current_time="2026-07-31T08:30:00+05:30")
     transfers = [o for s in resp["segments"] for o in s["options"]
                  if o.get("isMetroTransfer") and o["mode"] == "bus"]
     assert transfers
-    # at least one direct ride reaches the Majestic corridor (KBS)
+    # at least one direct ride reaches the Majestic/MG-road metro corridor
     kbs = [o for o in transfers
            if "kempegowda" in o["destinationStop"]["name"].lower()
-           or "ananda rao" in o["destinationStop"]["name"].lower()]
+           or "ananda rao" in o["destinationStop"]["name"].lower()
+           or "mg road" in o["destinationStop"]["name"].lower()
+           or "mahatma" in o["destinationStop"]["name"].lower()
+           or "mysore bank" in o["destinationStop"]["name"].lower()]
     assert kbs
     top = kbs[0]
     assert top["status"] in ("scheduled", "not_running")
     assert top["fare"] > 0
     # geometry is the stop-to-stop slice, never the full route
     assert top["geometrySource"] in ("gtfs_shape", "interpolated")
+    # the long ride is real, not a degenerate 1-min stub
+    assert top["durationMin"] > 10
     # and it chains into a metro at the interchange
     nxt = builder.build_segment_next(
         journey={"source": YELAHANKA_SCHOOL, "destination": MG_ROAD},
         chosen_legs=[{"optionId": top["optionId"], "arrivalTime": top["arrivalTime"],
                       "destinationStop": top["destinationStop"]["name"]}],
         group_size=1, budget=300)
+    # if the long bus already lands at the destination area, that's fine too
+    if nxt["journeyComplete"]:
+        assert nxt["arrival"]["message"]
+        return
     metros = [o for o in nxt["segments"][0]["options"] if o["mode"] == "metro"]
     assert metros
     mg = next((o for o in metros
                if o["destinationStop"]["name"] == "Mahatma Gandhi Road"), None)
     assert mg is not None  # Purple metro directly to MG Road
+
+
+# ------------------------------------------------- Rajanukunte direct-to-majestic
+def test_rajanukunte_direct_285_to_majestic(builder):
+    """285 from Rajanukunte rides directly to the Majestic/MG-road metro core;
+    long reverse-shape rides must keep real duration (not a 1-min stub)."""
+    rk = next(s for s in builder.db.all_bus_stops() if s.name == "Rajanukunte")
+    source = {"lat": rk.lat, "lng": rk.lng, "name": "Rajanukunte"}
+    dest = {"lat": 12.980973157500646, "lng": 77.59731531148601, "name": "Cubbon Park"}
+    resp = builder.build_segments(source, dest, group_size=1, budget=300,
+                                  current_time="2026-07-31T09:00:00+05:30")
+    transfers = [o for o in resp["segments"][0]["options"]
+                 if o.get("isMetroTransfer") and o["mode"] == "bus"]
+    assert transfers
+    # the 285 ride reaches the Majestic area (KBS / mysore bank / kpcc)
+    near_majestic = [o for o in transfers
+                     if o["routeNumber"] == "285"
+                     and any(k in o["destinationStop"]["name"].lower()
+                             for k in ("kempegowda", "mysore bank", "kpcc",
+                                       "mahatma", "mg road"))]
+    assert near_majestic
+    ride = near_majestic[0]
+    # long ride, real duration: ~27km at bus speed is far more than 10 min
+    assert ride["distanceKm"] > 10 and ride["durationMin"] > 30
+    # it chains into metro toward Cubbon Park
+    nxt = builder.build_segment_next(
+        journey={"source": source, "destination": dest},
+        chosen_legs=[{"optionId": ride["optionId"], "arrivalTime": ride["arrivalTime"],
+                      "destinationStop": ride["destinationStop"]["name"]}],
+        group_size=1, budget=300)
+    if nxt["journeyComplete"]:
+        return
+    metros = [o for o in nxt["segments"][0]["options"] if o["mode"] == "metro"]
+    assert metros
