@@ -1,0 +1,10 @@
+services:
+  graphhopper:
+    image: israelhikingmap/graphhopper:latest
+    ports:
+      - "8080:8989"
+    volumes:
+      - ./gh-data:/data
+    entrypoint: ["bash", "-c"]
+    command: ["java -Xmx2g -Xms1g -jar graphhopper-web-12.0-SNAPSHOT.jar server /data/config.yml"]
+    restart: unless-stopped

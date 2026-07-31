@@ -60,12 +60,12 @@ class GraphHopperClient:
         try:
             resp = requests.get(
                 f"{self._base}/route",
-                params={
-                    "profile": mode,
-                    "point": f"{lat1},{lng1}",
-                    "point": f"{lat2},{lng2}",
-                    "points_encoded": "false",
-                },
+                params=[
+                    ("profile", mode),
+                    ("point", f"{lat1},{lng1}"),
+                    ("point", f"{lat2},{lng2}"),
+                    ("points_encoded", "false"),
+                ],
                 timeout=self._timeout,
             )
             resp.raise_for_status()

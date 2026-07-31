@@ -6,6 +6,8 @@ DATA_FOLDER/bmtc_gtfs/
 
 # Secrets — never commit
 .env
+# ...but commit the template
+!.env.example
 
 # Python
 __pycache__/
@@ -33,3 +35,8 @@ Thumbs.db
 
 # ML artifacts
 ml/models/
+
+# GraphHopper — commit config.yml only; PBF + generated graph are huge
+gh-data/*.osm.pbf
+gh-data/graph-cache/
+gh-data/logs/

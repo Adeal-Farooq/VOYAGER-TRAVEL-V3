@@ -1,0 +1,41 @@
+# VOYAGER v2 GraphHopper config (Bangalore-region crop, car + foot, elevation off)
+
+graphhopper:
+  datareader.file: /data/bangalore.osm.pbf
+  graph.location: /data/graph-cache
+
+  profiles:
+    - name: car
+      custom_model_files: [car.json]
+    - name: foot
+      custom_model_files: [foot.json]
+
+  # Speed up car routing with Contraction Hierarchies; foot stays flexible
+  profiles_ch:
+    - profile: car
+
+  prepare.min_network_size: 200
+  routing.snap_preventions_default: tunnel, bridge, ferry
+
+  import.osm.ignored_highways: ""
+
+  graph.encoded_values: |
+    car_access, car_average_speed, country, road_class, roundabout, max_speed, road_environment,
+    foot_access, foot_average_speed, foot_priority, foot_road_access, hike_rating,
+    bike_access, bike_average_speed, bike_priority, bike_road_access, bike_network, mtb_rating, ferry_speed
+
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 0.0.0.0
+  admin_connectors:
+    - type: http
+      port: 8990
+      bind_host: 0.0.0.0
+
+logging:
+  appenders:
+    - type: console
+      time_zone: UTC
+      log_format: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
