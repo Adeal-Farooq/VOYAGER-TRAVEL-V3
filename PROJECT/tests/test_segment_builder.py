@@ -173,3 +173,21 @@ def test_timing_warm(builder):
     builder.build_segments(YELAHANKA_SCHOOL, WONDERLA, group_size=2, budget=500,
                            current_time="2026-07-31T15:20:00+05:30")
     assert time.perf_counter() - t0 < 3.0  # <=3s warm (PROMPT_3 §5)
+
+
+# -------------------------------------------------------- metro interchange fix
+def test_metro_interchange_offers_both_lines(builder):
+    """Majestic (Purple+Green hub) must yield metro rides on EITHER line."""
+    kbs = next(s for s in builder.db.all_bus_stops() if s.name == "Kempegowda Bus Station")
+    opts = builder._options_from_stop(
+        {"name": kbs.name, "lat": kbs.lat, "lng": kbs.lng}, MG_ROAD,
+        11 * 60 + 10, 1, 300, seg_num=3, connected_from=kbs.name)
+    metros = [o for o in opts if o["mode"] == "metro"]
+    assert metros  # standing at Majestic metro -> real metro options exist
+    lines = {o["routeNumber"] for o in metros}
+    assert "Purple" in lines and "Green" in lines
+    # the Purple ride actually reaches the MG Road corridor with real distance
+    mg = next((o for o in metros if o["destinationStop"]["name"] == "Mahatma Gandhi Road"), None)
+    assert mg is not None
+    assert mg["distanceKm"] > 1.0 and mg["durationMin"] > 1
+    assert mg["geometrySource"] == "metro_line" and mg["geometry"]

@@ -472,36 +472,40 @@ class SegmentBuilder:
         """Ride a metro line from the boarding station to forward stations."""
         from .fare_engine import metro_fare
 
-        line = station_node.line or "Purple Line"
+        # Interchange stations (e.g. Majestic) carry "Purple Line,Green Line" on the
+        # node; edges store a single line, so try each line the node serves.
+        lines = [ln.strip() for ln in (station_node.line or "Purple Line").split(",")]
         out: list[dict] = []
-        for fwd in self._metro_forward_stations(station_node, line, dest_lat, dest_lng):
-            dest_station, dlat, dlng = fwd[0], fwd[1], fwd[2]
-            duration, dist_m, path = self._metro_ride_duration(station_node.name,
-                                                               dest_station, line)
-            depart = board_after  # metro has no schedule -> estimated timing
-            arrive = depart + duration
-            fare = metro_fare(dist_m / 1000.0, "purple" if "Purple" in line else "green").amount or 0.0
-            total = fare * max(1, group_size)
-            geo = self._metro_polyline(path)
-            out.append({
-                "optionId": f"s{seg_num}_metro_{self._slug(dest_station)}",
-                "destinationStop": {"name": dest_station, "lat": dlat, "lng": dlng},
-                "mode": "metro", "routeNumber": "Purple" if "Purple" in line else "Green",
-                "fromStop": station_node.name,
-                "distanceKm": round(dist_m / 1000.0, 2),
-                "durationMin": duration,
-                "departureTime": _fmt(depart),
-                "arrivalTime": _fmt(arrive),
-                "arrivalMin": arrive,
-                "fare": round(fare, 2), "perPersonFare": round(fare, 2),
-                "geometry": geo, "geometrySource": "metro_line",
-                "status": "estimated",
-                "isTopRecommended": False,
-                "connectedFrom": connected_from,
-                "transitOptionsFromThisStop": 0,
-                "probeNext": [],
-                "exceedsBudget": total > budget and fare > 0,
-            })
+        for line in lines:
+            for fwd in self._metro_forward_stations(station_node, line, dest_lat, dest_lng):
+                dest_station, dlat, dlng = fwd[0], fwd[1], fwd[2]
+                duration, dist_m, path = self._metro_ride_duration(station_node.name,
+                                                                   dest_station, line)
+                depart = board_after  # metro has no schedule -> estimated timing
+                arrive = depart + duration
+                fare = metro_fare(dist_m / 1000.0,
+                                  "purple" if "Purple" in line else "green").amount or 0.0
+                total = fare * max(1, group_size)
+                geo = self._metro_polyline(path)
+                out.append({
+                    "optionId": f"s{seg_num}_metro_{self._slug(dest_station)}",
+                    "destinationStop": {"name": dest_station, "lat": dlat, "lng": dlng},
+                    "mode": "metro", "routeNumber": "Purple" if "Purple" in line else "Green",
+                    "fromStop": station_node.name,
+                    "distanceKm": round(dist_m / 1000.0, 2),
+                    "durationMin": duration,
+                    "departureTime": _fmt(depart),
+                    "arrivalTime": _fmt(arrive),
+                    "arrivalMin": arrive,
+                    "fare": round(fare, 2), "perPersonFare": round(fare, 2),
+                    "geometry": geo, "geometrySource": "metro_line",
+                    "status": "estimated",
+                    "isTopRecommended": False,
+                    "connectedFrom": connected_from,
+                    "transitOptionsFromThisStop": 0,
+                    "probeNext": [],
+                    "exceedsBudget": total > budget and fare > 0,
+                })
         return out
 
     # ------------------------------------------------------- route geometry
@@ -603,7 +607,7 @@ class SegmentBuilder:
         # walk the metro adjacency along the same line
         seen = {station_node.name}
         frontier = [station_node.name]
-        while frontier and len(out) < 6:
+        while frontier and len(out) < 16:
             nxt = []
             for name in frontier:
                 for nb, etype, edata in self.graph.neighbors(f"metro:{name}"):
@@ -633,8 +637,8 @@ class SegmentBuilder:
         path = self._metro_path(from_station, to_station, line)
         total_t, total_d = 0.0, 0.0
         for a, b in zip(path, path[1:]):
-            for nb, etype, edata in self.graph.neighbors(f"metro:{a}"):
-                if nb == f"metro:{b}" and etype == "metro" and edata.get("line") == line:
+            for nb, etype, edata in self.graph.neighbors(a):
+                if nb == b and etype == "metro" and edata.get("line") == line:
                     total_t += edata["time_min"]
                     total_d += edata["dist_m"]
                     break

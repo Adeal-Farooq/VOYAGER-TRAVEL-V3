@@ -114,7 +114,8 @@ class TransitAstarGraph:
 
     def _add_metro_nodes(self) -> None:
         for st in self.db.all_metro_stations():
-            self._node(f"metro:{st.name}", "metro", st.name, st.lat, st.lng, line=st.lines[0])
+            for l in st.lines:
+                self._node(f"metro:{st.name}", "metro", st.name, st.lat, st.lng, line=l)
         print(f"[graph] {sum(1 for n in self.nodes.values() if n.kind == 'metro')} metro nodes")
 
     def _add_rail_nodes(self) -> None:
@@ -253,11 +254,14 @@ class TransitAstarGraph:
 
     def metro_nodes_near(self, lat: float, lng: float, radius_m: float) -> list[tuple[str, float]]:
         out = []
+        seen: set[str] = set()
         for st in self.db.metro_near(lat, lng, radius_m):
             k = f"metro:{st.name}"
-            if k in self.nodes:
-                n = self.nodes[k]
-                out.append((k, _hav_m(lat, lng, n.lat, n.lng, self._dist_cache)))
+            if k in seen or k not in self.nodes:
+                continue
+            seen.add(k)
+            n = self.nodes[k]
+            out.append((k, _hav_m(lat, lng, n.lat, n.lng, self._dist_cache)))
         out.sort(key=lambda t: t[1])
         return out
 
