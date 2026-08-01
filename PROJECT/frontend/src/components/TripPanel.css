@@ -1,0 +1,7 @@
+.trip-panel { display: flex; flex-direction: column; gap: 12px; }
+.ai-insight { padding: 14px; border-left: 3px solid var(--primary); }
+.active-journey { padding: 12px; border-left: 3px solid var(--error); }
+.section-head { font-weight: 700; font-size: 14px; }
+.empty { padding: 22px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-3); }
+.empty .material-symbols-outlined { font-size: 34px; }
+.day-tabs { gap: 6px; }

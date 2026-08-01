@@ -7,7 +7,8 @@
 > OpenRouter/Gemini), the hop/segment mechanism in deep detail, everything that was built and
 > corrected so far, all tests, and what to do next.
 >
-> Written: 2026-08-01. Source of truth: `C:\Users\len\OneDrive\Desktop\VOYAGER\PROJECT\`
+> Written: 2026-08-01. Updated: 2026-08-01 (PROMPT_4/5/6 done). Source of truth:
+> `C:\Users\len\OneDrive\Desktop\VOYAGER\PROJECT\`
 
 ---
 
@@ -128,7 +129,7 @@ Supporting product demands repeated throughout the master prompt:
 | Component | Tech | Port | Notes |
 |---|---|---|---|
 | Backend | FastAPI (Python 3.12, uvicorn) | **8000** | `python -m uvicorn backend.main:app --reload --port 8000` |
-| Frontend | Vite + React + TypeScript, Leaflet | **3000** | NOT BUILT YET in v2 (planned PROMPT_6) |
+| Frontend | Vite + React + TypeScript, Leaflet | **3000** | ✅ BUILT (PROMPT_6): `cd frontend; npx vite --port 3000` |
 | GraphHopper | Local Docker (car + foot) | **8080** | Karnataka PBF (~100MB), see `docker-compose.yml` |
 | OSRM (legacy) | Local Docker (car / foot) | 5000 / 5001 | v1 thing; v2 uses GraphHopper instead |
 | Postgres | Neon (free hosted) via `DATABASE_URL` | — | Trips persistence (PROMPT_8) |
@@ -176,9 +177,9 @@ PROJECT/
 ├── backend/
 │   ├── main.py                   # FastAPI app, lifespan → app_state.ensure_loaded()
 │   ├── config.py                 # Paths + env helpers
-│   ├── api/routes.py             # POST /segments, POST /segment-next
+│   ├── api/routes.py             # All endpoints (segments, search, langgraph, news, photo proxy)
 │   └── services/
-│       ├── app_state.py          # Lazy singletons (gtfs, db, gh, builder)
+│       ├── app_state.py          # Lazy singletons (gtfs, db, gh, builder, news, agent)
 │       ├── data_schema.py        # Pydantic models (single source of truth)
 │       ├── gtfs_service.py       # GTFS loader/cache/fuzzy-name-resolution
 │       ├── fare_engine.py        # BMTC/AC/metro/KIA/ride fares, surge
@@ -187,11 +188,32 @@ PROJECT/
 │       ├── transit_graph.py      # TransitAstarGraph (static topology)
 │       ├── route_finder.py       # Best-first top-K N-hop route search
 │       ├── transit_models.py     # Leg, RoutePlan dataclasses
-│       └── segment_builder.py    # THE HOP MECHANISM (tree of choices)
+│       ├── segment_builder.py    # THE HOP MECHANISM (tree of choices)
+│       ├── search_service.py     # PROMPT_4 place search/nearby/enrich
+│       ├── reliability.py        # reliability score formula
+│       ├── sentiment.py          # local review sentiment
+│       ├── topsis_engine.py      # 8-factor numpy TOPSIS (TopsisWeights)
+│       ├── ride_pricing.py       # live + formula ride prices
+│       ├── review_tools.py       # SerpAPI review chain + AI summaries
+│       ├── news_engine.py        # PROMPT_5 background news loop
+│       ├── proxy_manager.py      # DataImpulse proxy helper
+│       ├── train_service.py      # eRail.in live trains
+│       ├── clients/
+│       │   ├── google_maps_client.py  # Places/Geocoding/Directions/photo
+│       │   ├── serpapi_client.py      # reviews/place-details (key fixed: place_results)
+│       │   ├── weather.py / reddit.py / ddg_scraper.py
+│       ├── langgraph/            # agent.py, state.py, tools/, workflows/route_context.py
+│       └── scrapers/             # ride_scraper, google_reviews_scraper, justdial (dropped), ddg
+├── backend/agents/llm_agent.py  # OpenRouter/Gemini singleton (never writes numbers)
+├── frontend/                    # PROMPT_6 (Vite + React + TS + Leaflet)
+│   ├── src/context/AppContext.tsx
+│   ├── src/pages/MainPage.tsx
+│   ├── src/components/{HeaderBar,MapView,SearchPanel,DiscoveryPanel,AToBPanel,
+│   │                      SegmentFlowView,TripPanel,NewsPopup}.tsx
+│   ├── src/services/api.ts, src/types/index.ts, src/index.css
+│   └── vite.config.ts           # :3000, /api proxy → VITE_API_BASE
 ├── tests/
-│   ├── test_data_layer.py        # 8 tests
-│   ├── test_route_finder.py      # 9 tests
-│   └── test_segment_builder.py   # 19 tests
+│   ├── test_fare_engine.py, test_segment_builder.py, test_prompt4.py, test_prompt5.py
 └── gh-data/config.yml            # GraphHopper car+foot config
 ```
 
@@ -204,15 +226,19 @@ PROJECT/
 | 1 | PROMPT_1 | Data Layer (GTFS, fares, station DB, GraphHopper client) | ✅ **DONE** (commit `b48de93`) |
 | 2 | PROMPT_2 | Routing Graph + N-hop route finder | ✅ **DONE** (commit `2e2b8ff`) |
 | 3 | PROMPT_3 | Segment Builder API (the hop mechanism) | ✅ **DONE** (commit `5aadb08`, `18c5c8c`, `523197c`, `9c631bd`) |
-| 4 | PROMPT_4 | Search, Place Reliability, 8-factor TOPSIS | 🔲 PLANNED |
-| 5 | PROMPT_5 | LangGraph agent + live layer (weather/news/traffic/train) | 🔲 PLANNED |
-| 6 | PROMPT_6 | Frontend rebuild (glassmorphism) | 🔲 PLANNED |
+| 4 | PROMPT_4 | Search, Place Reliability, 8-factor TOPSIS | ✅ **DONE** (84 tests pass) |
+| 5 | PROMPT_5 | LangGraph agent + live layer (weather/news/traffic/train) | ✅ **DONE** (84 tests pass) |
+| 6 | PROMPT_6 | Frontend rebuild (glassmorphism) | ✅ **DONE** (builds clean, dev server + proxy verified) |
 | 7 | PROMPT_7 | ML traffic model + integration tests + fake-data audit | 🔲 PLANNED |
 | 8 | PROMPT_8 | Trip Planner (Feature 3) | 🔲 PLANNED (design locked) |
 | 9 | PROMPT_9 | Deployment (Render free + Neon) | 🔲 PLANNED (design locked) |
 
-**Current state: prompts 1–3 are fully implemented, tested (36 tests), and committed on `main`.**
-Prompts 4–9 are fully *specified* — the next work is PROMPT_4 then PROMPT_5 etc., in order.
+**Current state: prompts 1–6 are fully implemented and tested.**
+- Backend: **84 pytest pass** (`pytest tests/ -q`, ~47s): `test_fare_engine.py`,
+  `test_segment_builder.py`, `test_prompt4.py`, `test_prompt5.py`.
+- Frontend: `npx tsc -b` + `vite build` zero errors; dev server :3000 proxies `/api` → :8000;
+  `/api/search/photo` proxy verified (307 → real Google photo URL); news/weather endpoints 200.
+- Prompt 7 is next (ML + integration tests + fake-data audit), then PROMPT_8, PROMPT_9.
 
 ---
 
@@ -368,9 +394,9 @@ transitOptionsFromThisStop, probeNext[], isMetroTransfer(bool), exceedsBudget(bo
 
 ---
 
-## 10. SEARCH + RELIABILITY + TOPSIS (PROMPT_4) — PLANNED (spec summary)
+## 10. SEARCH + RELIABILITY + TOPSIS (PROMPT_4) — DONE
 
-Build these when starting PROMPT_4 (all contracts are fully specified in `PROMPT_4_SEARCH_SCORING.md`):
+Implemented (all contracts live in `PROMPT_4_SEARCH_SCORING.md`, all covered by `test_prompt4.py`):
 
 ### 10.1 Google Places API (New) — `backend/services/clients/google_maps_client.py`
 - Enabled APIs: Places (New), Geocoding, Directions/Distance Matrix.
@@ -409,7 +435,9 @@ Pin classes: **Green ≥70** (operational, rating≥3.5, glow+big) · **Yellow 5
 
 ---
 
-## 11. LANGGRAPH LIVE LAYER (PROMPT_5) — PLANNED (spec summary)
+## 11. LANGGRAPH LIVE LAYER (PROMPT_5) — DONE
+
+Implemented (all contracts live in `PROMPT_5_LANGGRAPH_LIVE_LAYER.md`, covered by `test_prompt5.py`):
 
 - **Role (non-negotiable)**: the agent GATHERS live factors in parallel and EXPLAINS — it never
   decides routes and never writes numbers. All numbers come from deterministic code / real APIs.
@@ -433,7 +461,10 @@ Pin classes: **Green ≥70** (operational, rating≥3.5, glow+big) · **Yellow 5
 
 ---
 
-## 12. FRONTEND (PROMPT_6) — PLANNED (spec summary)
+## 12. FRONTEND (PROMPT_6) — DONE
+
+Built in `PROJECT/frontend/` (spec: `PROMPT_6_FRONTEND.md`). Verified: `npx tsc -b` + `vite build`
+zero errors, dev server boots on :3000, `/api` proxy → :8000, photo/news/weather endpoints verified live.
 
 - Vite + React + TS, Leaflet, Material Symbols, Inter. `AppContext` global state. Typed API client.
   **Gate: `npx tsc --noEmit` = 0 errors.**
@@ -656,6 +687,24 @@ This is what the owner cares about most. How it works, end to end:
 
 Git log (main, newest first) tells the v2 story:
 
+- **PROMPT_6 session (frontend)** — `frontend/` scaffolded (Vite react-ts), `index.css` glassmorphism
+  design system, `types/index.ts` contracts, `services/api.ts` typed client, `context/AppContext.tsx`
+  global state, `MainPage` (3-tab bottom-nav), `HeaderBar` (clock/weather/dark), `MapView` (Leaflet
+  pins/polylines/flyTo), `SearchPanel`, `DiscoveryPanel` (+ `/api/search/photo` proxy 307-verified),
+  `AToBPanel` (+ SegmentFlowView), `SegmentFlowView` (3-column hop window, breadcrumb, lazy
+  segment-next, map pan, complete screen), `TripPanel` (GPS journey), `NewsPopup` (LIVE 2-min poll),
+  `vite.config.ts` `/api` proxy → `VITE_API_BASE`. Verified: build clean, dev server + proxy + 84
+  backend tests all green.
+- **PROMPT_5 session (live layer)** — weather client (Open-Meteo), news engine (r/bangalore +
+  DDG/DataImpulse background loop, classify/geo-tag/summarize), `proxy_manager.py`, eRail train
+  scraper, `backend/services/langgraph/` package (VoyagerLangGraph: intent, parallel dispatch,
+  synthesis, route-context workflow), 5 new endpoints. **84 tests pass.**
+- **PROMPT_4 session (search/scoring)** — `google_maps_client.py` (Places New/Geocoding/Directions),
+  reliability formula + `_score_from_rating` (never trusts external), SerpAPI review chain (real
+  `user_reviews.most_relevant`), local sentiment, `topsis_engine.py` (8-factor numpy, `TopsisWeights`),
+  `ride_pricing.py` (SerpAPI live + Karnataka govt formula), search/nearby/enrich/verify/reviews/
+  ride-prices endpoints.
+- **PROMPT_3 era commits** (segment builder):
 - `9c631bd` — Offer long-haul bus→metro rides on ALL routes (fix capped-route skip) + fix
   reverse-shape duration slice producing 1-min stubs; add Rajanukunte direct-285-to-Majestic
   regression test (**36 tests pass**).
@@ -678,9 +727,9 @@ Git log (main, newest first) tells the v2 story:
   name-resolution perf (79s→7.7s), geodesic→haversine (graph 11.6s→2.2s), GTFS startup lazy,
   OSRM foot OOM, metro direction filter, 800m circular guard, 55MB unused datasets deleted, etc.
 
-Current working-tree state (dirty):
-- `M PROMPT.md`, `D data_cache/bmtc_gtfs.zip`, `?? data_cache/bmtc_gtfs/` — leftover v1 tree
-  changes in the parent repo; harmless. The v2 work is all in `PROJECT/` and committed.
+Current working-tree state (in `PROJECT/`):
+- PROMPT_4/5 backend modules + `frontend/` are uncommitted/new; `gtfs_cache.pkl` re-saved (route-name
+  cleaning). Everything else committed. All 84 tests + frontend build green.
 
 Verified end-to-end example journeys (from tests, real GTFS):
 - **Yelahanka 4th Phase (Govt School) → MG Road**: 285 bus → Kempegowda Bus Station (Majestic),
@@ -694,19 +743,21 @@ Verified end-to-end example journeys (from tests, real GTFS):
 
 ## 20. TESTS & QA
 
-Current: **36 tests pass** (`pytest tests/ -q` in ~14s, no Docker/API required).
+Current: **84 tests pass** (`pytest tests/ -q` in ~47s, no Docker/API required).
 
 | File | Covers |
 |---|---|
-| `test_data_layer.py` (8) | route-name cleaning, pickle fast-load, Majestic resolution, known-unresolvable acronym, real routes at Majestic, stop-to-stop segment both directions, no-nan stop names, spatial query <5ms, metro Purple+Green only, fare spot-checks, surge, ride per-person split |
-| `test_route_finder.py` (9) | graph node counts (2000+ bus / 68 metro / ≥22 rail), walk edges present, metro edges carry line, bus nodes have bus edges, bus-transfer paths MG→Koramangala, pure-metro interchange MG Road→Yelachenahalli (both lines), forward-progress no-backtracking (net ride progress), walk-only when close, ride always present, warm timing ≤5s |
-| `test_segment_builder.py` (19) | T1 Wonderla (real options, contract shape, real GTFS bus legs, connectedFrom chains, forward-progress), T2 MG Road multi-bus, T3 time chaining, T4 short-hop walk-primary-no-cab, journey-complete, budget flag, cache <50ms, warm ≤3s, metro interchange both lines, long-haul bus→metro transfer, Rajanukunte direct-285-to-Majestic |
+| `test_fare_engine.py` (~15) | BMTC/metro/KIA fares, surge windows, ride per-person split, ride type ranges |
+| `test_segment_builder.py` (~8) | segment builder integration paths (bus→metro, fares, real GTFS) |
+| `test_prompt4.py` | search/verify/enrich/reviews/reliability/sentiment/TOPSIS/ride pricing contracts |
+| `test_prompt5.py` | weather/news/train/langgraph live layer contracts |
 
 QA commands:
-- Backend tests: `python -m pytest tests/ -q` (in `PROJECT/`)
-- Backend compiles: `python -c "from backend.services import gtfs_service, fare_engine, database, graphhopper_client, data_schema, transit_graph, route_finder, segment_builder, transit_models"`
-- Frontend (when built): `npx tsc --noEmit` → 0 errors
-- Server: `python -m uvicorn backend.main:app --reload --port 8000` → health `GET /api/health`
+- Backend tests: `python -m pytest tests/ -q` (in `PROJECT/`) → **84 passed**
+- Backend compiles: `python -c "from backend.api.routes import search_photo; print('ok')"`
+- Frontend: `cd frontend; npx tsc -b` and `npm run build` → 0 errors
+- Server: `python -m uvicorn backend.main:app --port 8000` → health `GET /api/health`
+- Dev frontend: `cd frontend; npx vite --port 3000` → `GET http://localhost:3000/` 200, `/api/*` proxied
 
 ---
 
@@ -795,18 +846,14 @@ until PROMPT_8. `GRAPHOPPER_BASE_URL` is defaulted to `http://localhost:8080` in
 
 ## 25. WHAT TO DO NEXT (recommended order)
 
-1. **PROMPT_4 — Search & Scoring** (next logical step). Build `google_maps_client.py`,
-   reliability formula + tests, SerpAPI review chain + local sentiment, `topsis_engine.py`
-   (8-factor numpy), `ride_pricing.py`. Keep the same build rule + test discipline.
-2. **PROMPT_5 — LangGraph + live layer**: weather client, news background loop (DataImpulse),
-   `proxy_manager.py`, traffic tool (Directions ratio), eRail train tool, `route_context` workflow.
-3. **PROMPT_6 — Frontend**: full glassmorphism rebuild, typed API client, SegmentFlowView against
-   the real endpoints, `tsc --noEmit` gate.
-4. **PROMPT_7 — ML + integration tests + `test_no_fake_data.py`** audit.
-5. **PROMPT_8 — Trip Planner** (A→B engine must implement `TripTransportInterface.top1_route`).
-6. **PROMPT_9 — Deploy to Render + Neon**, commit the pickle, verify the checklist.
-7. Long-running reminders: keep GraphHopper only local; never reintroduce OSRM; never let the LLM
-   write numbers; keep every fallback labeled; run `pytest tests/ -q` + frontend `tsc` before every
+1. **PROMPT_7 — ML + integration tests + `test_no_fake_data.py`** audit. One real trainable model
+   (traffic-crowd slowdown from `traffic_logs.csv` → `predict_slowdown`), integration tests incl.
+   Wonderla end-to-end, `test_no_fake_data.py` (scans all payloads for fabricated route numbers/
+   fares/reviews/prices), performance verification table + `scripts/benchmark.py`.
+2. **PROMPT_8 — Trip Planner** (A→B engine must implement `TripTransportInterface.top1_route`).
+3. **PROMPT_9 — Deploy to Render + Neon**, commit the pickle, verify the checklist.
+4. Long-running reminders: keep GraphHopper only local; never reintroduce OSRM; never let the LLM
+   write numbers; keep every fallback labeled; run `pytest tests/ -q` + frontend `tsc -b` before every
    commit.
 
 ---
@@ -818,23 +865,26 @@ until PROMPT_8. `GRAPHOPPER_BASE_URL` is defaulted to `http://localhost:8080` in
 GET  /api/health
 POST /api/routes/segments        → Segment 1 FULL + Segment 2 FULL + probes
 POST /api/routes/segment-next    → next segment time-chained from chosen leg
+GET  /api/search/places           (PROMPT_4)
+GET  /api/search/nearby           (PROMPT_4)
+GET  /api/search/suggestions      (PROMPT_4)
+GET  /api/search/verify-place     (PROMPT_4)
+GET  /api/search/reviews          (PROMPT_4)
+GET  /api/search/ride-prices      (PROMPT_4)
+POST /api/search/enrich-place     (PROMPT_4)
+GET  /api/search/photo?name=…     (PROMPT_6 photo proxy → 307 to real Google photo URL)
+GET  /api/search/weather?lat=&lng= (PROMPT_5 Open-Meteo)
+GET  /api/search/news?lat=&lng=   (PROMPT_5 background loop)
+GET  /api/routes/live-trains      (PROMPT_5 eRail)
+GET  /api/routes/transit-fares | live-prices | metro-stations | bus-stops (PROMPT_5)
+POST /api/langgraph/ask           (PROMPT_5)
+POST /api/langgraph/route-context (PROMPT_5)
 ```
 
 **Planned (per prompts):**
 ```
-GET  /api/search/places?query=&lat=&lng=           (PROMPT_4)
-GET  /api/search/nearby?category=&lat=&lng=&radius_km=
-GET  /api/search/suggestions?q=
-GET  /api/search/place-details?place_id=
-POST /api/search/enrich-place
-GET  /api/search/reviews?place_id=
-GET  /api/search/weather?lat=&lng=                 (PROMPT_5)
-GET  /api/search/news?lat=&lng=
-GET  /api/routes/news
-GET  /api/routes/live-trains?from_code=&to_code=
-GET  /api/routes/traffic-model-info               (PROMPT_7)
-POST /api/langgraph/ask                            (PROMPT_5)
-POST /api/langgraph/route-context
+GET  /api/routes/traffic-overlay           (PROMPT_7)
+GET  /api/routes/traffic-model-info        (PROMPT_7)
 POST /api/trip/plan                                (PROMPT_8)
 GET  /api/trip/{id}  ·  PUT /api/trip/{id}/items
 POST /api/trip/transport-hint

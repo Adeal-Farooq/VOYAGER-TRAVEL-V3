@@ -247,9 +247,10 @@ def test_rajanukunte_direct_285_to_majestic(builder):
     transfers = [o for o in resp["segments"][0]["options"]
                  if o.get("isMetroTransfer") and o["mode"] == "bus"]
     assert transfers
-    # the 285 ride reaches the Majestic area (KBS / mysore bank / kpcc)
+    # the 285 ride (real BMTC variant numbers carry suffixes, e.g. "285-N"/"285-KA")
+    # reaches the Majestic area (KBS / mysore bank / kpcc)
     near_majestic = [o for o in transfers
-                     if o["routeNumber"] == "285"
+                     if (o["routeNumber"] == "285" or o["routeNumber"].startswith("285-"))
                      and any(k in o["destinationStop"]["name"].lower()
                              for k in ("kempegowda", "mysore bank", "kpcc",
                                        "mahatma", "mg road"))]

@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.api.routes import router as routes_router
+from backend.api.routes import search_router
 from backend.services import app_state
 
 
@@ -21,6 +22,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="VOYAGER v2", version="0.3.0", lifespan=lifespan)
 
 app.include_router(routes_router, prefix="/api/routes")
+app.include_router(search_router, prefix="/api")
 
 
 @app.get("/api/health")

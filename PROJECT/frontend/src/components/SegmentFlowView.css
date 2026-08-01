@@ -1,0 +1,26 @@
+.flow-view { display: flex; flex-direction: column; gap: 10px; }
+
+.live-banner { padding: 10px 12px; border-left: 3px solid var(--error); }
+
+.breadcrumb { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 10px 12px; align-items: center; }
+.crumb { font-size: 12px; }
+.crumb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex-shrink: 0; }
+.crumb-route { font-weight: 700; color: var(--primary); }
+
+.columns { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; }
+.hop-col { min-width: 210px; max-width: 250px; flex-shrink: 0; }
+.col-head { font-weight: 700; font-size: 13px; margin-bottom: 6px; display: flex; align-items: baseline; gap: 6px; }
+.hop-list { display: flex; flex-direction: column; gap: 8px; }
+
+.hop-card { padding: 10px; text-align: left; border-left: 3px solid var(--primary); cursor: pointer; }
+.hop-card.walk { border-style: dashed; }
+.hop-card.selected { border-color: var(--primary) !important; box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.35); }
+.hop-card:hover { transform: translateX(2px); }
+
+.hop-skel { height: 120px; }
+
+.complete { padding: 18px; text-align: center; }
+.complete .done { color: var(--success); font-size: 34px; }
+.complete h3 { margin: 0; font-size: 16px; }
+.complete .row { justify-content: center; gap: 18px; }
+.complete .stat { font-size: 14px; }

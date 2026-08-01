@@ -1,0 +1,26 @@
+.search-panel { display: flex; flex-direction: column; gap: 12px; }
+.search-panel .tabs { gap: 6px; }
+
+.specific .search-box { display: flex; gap: 8px; position: relative; }
+.specific .search-box .btn { width: 44px; }
+
+.suggest { position: absolute; top: 48px; left: 0; right: 0; z-index: 30; padding: 6px; display: flex; flex-direction: column; }
+.suggest-item { display: flex; gap: 8px; align-items: flex-start; text-align: left; padding: 8px; border-radius: 8px; }
+.suggest-item:hover { background: rgba(120, 130, 160, 0.1); }
+
+.nearby { display: flex; flex-direction: column; gap: 12px; }
+.pinned-banner { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto; }
+.radius input[type="range"] { flex: 1; }
+
+.btn.full { width: 100%; justify-content: center; display: flex; align-items: center; gap: 6px; }
+.btn.small { padding: 6px 10px; font-size: 13px; }
+.spinner.inline { display: inline-block; width: 16px; height: 16px; border-width: 2px; }
+
+.results { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.place-card { padding: 12px; border-left: 3px solid var(--score-yellow); cursor: pointer; }
+.place-name { font-weight: 700; font-size: 15px; }
+.small { font-size: 12px; }
+
+.skeleton-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.card-skel { height: 96px; }
