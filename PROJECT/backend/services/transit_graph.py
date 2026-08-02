@@ -58,15 +58,20 @@ class TransitAstarGraph:
     Edge types stored in adjacency tuples: (neighbor_key, edge_type, data)
       edge_type: "bus" | "metro" | "walk" | "interchange"
       data: dict with time_min, dist_m and type-specific fields.
+
+    The (nodes, adj) topology is persisted to a pickle after first build and
+    reloaded (~0.07s vs ~1.7s rebuild) when the source files are unchanged.
+    Query methods keep live gtfs/db references (name resolution is lazy).
     """
 
-    def __init__(self, gtfs, db):
+    def __init__(self, gtfs, db, use_cache: bool = True):
         self.gtfs = gtfs
         self.db = db
         self.nodes: dict[str, TransitNode] = {}
         self.adj: dict[str, list[tuple[str, str, dict]]] = {}
         self._dist_cache: dict = {}
-        self._build()
+        if not (use_cache and self._load_cache()):
+            self._build()
 
     # ------------------------------------------------------------ building
     def _build(self) -> None:
@@ -80,6 +85,66 @@ class TransitAstarGraph:
         self._add_walk_edges()
         print(f"[graph] {len(self.nodes)} nodes, {sum(len(v) for v in self.adj.values()) // 2} edges "
               f"in {time.perf_counter() - t0:.2f}s")
+        self._save_cache()
+
+    # -------------------------------------------------------------- caching
+    @staticmethod
+    def _source_mtime() -> tuple[float, ...]:
+        """mtime signature of everything the graph topology depends on."""
+        from .. import config
+
+        files = [
+            config.GTFS_CACHE_PATH,
+            config.METRO_NETWORK_PATH,
+            config.BUS_STOPS_MASTER_PATH,
+            config.RAIL_STATIONS_PATH,
+        ]
+        sig = []
+        for p in files:
+            try:
+                sig.append(p.stat().st_mtime_ns)
+            except OSError:
+                sig.append(-1)
+        return tuple(sig)
+
+    def _load_cache(self) -> bool:
+        import pickle
+
+        from .. import config
+
+        path = config.GRAPH_CACHE_PATH
+        try:
+            if not path.is_file():
+                return False
+            t0 = time.perf_counter()
+            with open(path, "rb") as fh:
+                payload = pickle.load(fh)
+            if payload.get("src_mtime") != self._source_mtime():
+                return False  # stale -> rebuild
+            self.nodes = payload["nodes"]
+            self.adj = payload["adj"]
+            print(f"[graph] loaded topology from {path.name} in "
+                  f"{time.perf_counter() - t0:.2f}s")
+            return True
+        except Exception as exc:  # noqa: BLE001 — corrupt cache -> rebuild
+            print(f"[graph] cache load failed ({exc}); rebuilding")
+            return False
+
+    def _save_cache(self) -> None:
+        import pickle
+
+        from .. import config
+
+        path = config.GRAPH_CACHE_PATH
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "wb") as fh:
+                pickle.dump({"src_mtime": self._source_mtime(),
+                             "nodes": self.nodes, "adj": self.adj}, fh,
+                            protocol=pickle.HIGHEST_PROTOCOL)
+            print(f"[graph] saved topology -> {path.name}")
+        except Exception as exc:  # noqa: BLE001 — cache is best-effort
+            print(f"[graph] cache save failed ({exc})")
 
     def _node(self, key: str, kind: str, name: str, lat: float, lng: float,
               line: str | None = None, routes: list[str] | None = None) -> TransitNode:

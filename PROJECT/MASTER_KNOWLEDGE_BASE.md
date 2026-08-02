@@ -264,18 +264,18 @@ PROJECT/                                          ← THE v2 BUILD ROOT
 | 4 | PROMPT_4 | Search, Place Reliability, 8-factor TOPSIS | ✅ **DONE** (28 tests) |
 | 5 | PROMPT_5 | LangGraph agent + live layer (weather/news/traffic/train) | ✅ **DONE** (20 tests) |
 | 6 | PROMPT_6 | Frontend rebuild (glassmorphism) | ✅ **DONE** (build clean, proxy verified) |
-| 7 | PROMPT_7 | ML traffic model + integration tests + fake-data audit | 🔲 **NEXT** (spec fully written) |
+| 7 | PROMPT_7 | ML traffic model + integration tests + fake-data audit | ✅ **DONE** (this session) |
 | 8 | PROMPT_8 | Trip Planner (Feature 3) | 🔲 PLANNED (design locked in grilling) |
 | 9 | PROMPT_9 | Deployment (Render free + Neon) | 🔲 PLANNED (design locked) |
 
-**Current state: prompts 1–6 fully implemented and tested.**
-- Backend: **84 pytest pass** (`python -m pytest tests/ -q` in ~47s, no Docker/API required).
+**Current state: prompts 1–7 fully implemented and tested.**
+- Backend: **104 pytest pass** (`python -m pytest tests/ -q` in ~26s, no Docker/API required).
   Files: `test_data_layer.py` (12), `test_route_finder.py` (10), `test_segment_builder.py` (14),
-  `test_prompt4.py` (28), `test_prompt5.py` (20).
+  `test_prompt4.py` (33), `test_prompt5.py` (20), `test_traffic_model.py` (9), `test_no_fake_data.py` (6).
 - Frontend: `npx tsc -b` + `vite build` zero errors; dev server :3000 proxies `/api` → :8000;
   `/api/search/photo` proxy verified (307 → real Google photo URL); news/weather endpoints 200.
-- Committed at `a5348d3` "Build PROMPT_4/5/6 …" (working tree clean).
-- Prompts 7–9 are fully *specified* (see §24) — build order is 7 → 8 → 9.
+- Prompt 7 (ML + integration + fake-data audit) **DONE**: traffic model + `traffic-model-info` endpoint
+  + benchmark all within budget. Prompts 8–9 fully *specified* (see §24) — build order is 8 → 9.
 
 ---
 
@@ -285,10 +285,12 @@ PROJECT/                                          ← THE v2 BUILD ROOT
 Module-level lazy singletons, built once in dependency order by `_load_all()`:
 
 ```
-1. _gtfs     = GTFSService()        .load()     → pickle 0.65s
-2. _db       = TransitDatabase()                  → 2970 bus stops, 69 metro, 48 rail
+1. _gtfs     = GTFSService()        .load()     → pickle ~1.2s (parallel with db)
+2. _db       = TransitDatabase()                  → 2970 bus stops, 69 metro, 48 rail (parallel with gtfs)
 3. _gh       = GraphHopperClient()               → local Docker :8080
-4. _builder  = SegmentBuilder(_gtfs, _db, _gh)    → builds TransitAstarGraph lazily (~2s)
+4. _builder  = SegmentBuilder(_gtfs, _db, _gh)    → loads TransitAstarGraph topology from
+                                                    transit_graph.pkl pickle (~0.2s; ~1.7s rebuild only
+                                                    when source files change)
 5. _weather  = WeatherClient()                    → Open-Meteo
 6. _search   = SearchService(GoogleMapsClient(), SerpAPIClient())
 7. _news     = NewsEngine(ProxyManager())         → background thread starts on first use

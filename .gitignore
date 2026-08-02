@@ -33,3 +33,8 @@ node_modules/
 n8n-instance/
 osrm-data/
 osrm-data-foot/
+
+# Generated at runtime (regenerate in <2s on first boot)
+PROJECT/DATA_FOLDER/processed/transit_graph.pkl
+PROJECT/DATA_FOLDER/processed/traffic_model.json
+

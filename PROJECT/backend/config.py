@@ -10,6 +10,7 @@ METRO_NETWORK_PATH = DATA_FOLDER / "bengaluru_metro_network.csv"
 BUS_STOPS_MASTER_PATH = DATA_FOLDER / "bmtc_all_stops_master.csv"
 RAIL_STATIONS_PATH = DATA_FOLDER / "karnataka_railway_stations.json"
 TRAFFIC_LOGS_PATH = DATA_FOLDER / "traffic_logs.csv"
+GRAPH_CACHE_PATH = DATA_FOLDER / "processed" / "transit_graph.pkl"
 
 ENV_PATH = PROJECT_ROOT / ".env"
 

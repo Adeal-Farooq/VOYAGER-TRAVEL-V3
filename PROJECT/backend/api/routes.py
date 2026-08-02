@@ -218,3 +218,12 @@ def live_trains(from_station: str, to_station: str):
     if not fc or not tc:
         return {"trains": [], "source": "none", "note": "no station codes mapped"}
     return svc.trains_between(fc, tc)
+
+
+@search_router.get("/routes/traffic-model-info")
+def traffic_model_info():
+    """Transparency endpoint (PROMPT_7 §2.3): what the traffic model is + its MAE."""
+    model = app_state.get_traffic()
+    info = model.model_info()
+    info["range"] = [1.0, 1.8]
+    return info
