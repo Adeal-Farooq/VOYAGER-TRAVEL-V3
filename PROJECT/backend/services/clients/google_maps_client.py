@@ -28,12 +28,14 @@ logger = logging.getLogger(__name__)
 
 _PLACES_BASE = "https://places.googleapis.com/v1"
 _LEGACY_BASE = "https://maps.googleapis.com/maps/api"
+_OSM_SEARCH = "https://nominatim.openstreetmap.org/search"
 
 # 40% keyword overlap requirement (PROMPT_4 §2.1)
 MIN_KEYWORD_OVERLAP = 0.40
 _DEDUP_RND = 4  # dedup places whose coords round to 4 decimals (~11m)
 _DEFAULT_TIMEOUT = 4.0
 _CACHE_TTL_S = 24 * 3600  # place search/details cache 24h (PROMPT_4 §2.5)
+_GOOGLE_DEAD_GRACE_S = 10 * 60  # skip Google entirely for 10min after a 401/403
 
 # Bangalore reference center (search verifies results within this radius)
 BANGALORE_CENTER = (12.9716, 77.5946)
@@ -72,6 +74,7 @@ class GoogleMapsClient:
         self._center = center
         self._timeout = timeout_s
         self._cache: dict[str, tuple[float, object]] = {}
+        self._google_dead_until = 0.0  # set after 401/403 so fallback is instant
         self._lock = None  # single-threaded FastAPI sync handlers
         if not self._key:
             logger.warning("[maps] GOOGLE_MAPS_API_KEY missing — place/directions data unavailable")
@@ -109,44 +112,72 @@ class GoogleMapsClient:
 
     # --------------------------------------------------------------- geocode
     def geocode(self, query: str) -> dict | None:
-        """Query -> {lat, lng, name, address} via the Geocoding API. None on failure."""
+        """Query -> {lat, lng, name, address} via Geocoding API (OSM fallback)."""
         key = f"geocode:{query.strip().lower()}"
         cached = self._cached(key)
         if cached is not None:
             return cached
-        if not self._key:
-            return None
-        try:
-            resp = requests.get(
-                f"{_LEGACY_BASE}/geocode/json",
-                params={"address": query, "key": self._key},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            loc = data["results"][0]["geometry"]["location"]
-            out = {
-                "lat": loc["lat"],
-                "lng": loc["lng"],
-                "name": data["results"][0].get("formatted_address", query),
-                "address": data["results"][0].get("formatted_address", ""),
-            }
-        except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
-            logger.warning("[maps] geocode(%s) failed: %s", query, exc)
-            out = None
+        out = None
+        if self._key and time.time() >= self._google_dead_until:
+            try:
+                resp = requests.get(
+                    f"{_LEGACY_BASE}/geocode/json",
+                    params={"address": query, "key": self._key},
+                    timeout=self._timeout,
+                )
+                if resp.status_code in (401, 403):
+                    self._google_dead_until = time.time() + _GOOGLE_DEAD_GRACE_S
+                resp.raise_for_status()
+                data = resp.json()
+                loc = data["results"][0]["geometry"]["location"]
+                out = {
+                    "lat": loc["lat"],
+                    "lng": loc["lng"],
+                    "name": data["results"][0].get("formatted_address", query),
+                    "address": data["results"][0].get("formatted_address", ""),
+                }
+            except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
+                logger.warning("[maps] geocode(%s) failed: %s", query, exc)
+                out = None
+        if not out:
+            out = self._osm_geocode(query)
         self._store(key, out)
         return out
+
+    def _osm_geocode(self, query: str) -> dict | None:
+        """OpenStreetMap Nominatim geocode -> {lat, lng, name, address}."""
+        try:
+            resp = requests.get(
+                _OSM_SEARCH, params={"q": query, "format": "jsonv2", "limit": 1},
+                headers={"User-Agent": "VOYAGER-v2/0.3 (college transit project)"},
+                timeout=6.0)
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                return None
+            r = data[0]
+            return {
+                "lat": float(r.get("lat", 0.0)),
+                "lng": float(r.get("lon", 0.0)),
+                "name": r.get("name") or r.get("display_name", query),
+                "address": r.get("display_name", ""),
+            }
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning("[osm] geocode(%s) failed: %s", query, exc)
+            return None
 
     # ---------------------------------------------------------------- search
     def search_places(self, query: str, lat: float | None = None, lng: float | None = None,
                       radius_m: int = 15000) -> list[dict]:
-        """Text Search (New). Verified + deduped raw place dicts (see Place)."""
+        """Text Search (New) -> OSM Nominatim fallback. Verified + deduped."""
         key = f"search:{query.strip().lower()}:{lat}:{lng}"
         cached = self._cached(key)
         if cached is not None:
             return list(cached)
-        if not self._key:
-            return []
+        if not self._key or time.time() < self._google_dead_until:
+            out = self._osm_places(query, lat, lng, radius_m)
+            self._store(key, list(out))
+            return out
         body: dict = {"textQuery": query}
         clat, clng = (lat, lng) if lat is not None else self._center
         body["locationBias"] = {
@@ -160,9 +191,11 @@ class GoogleMapsClient:
                     "places.id,places.displayName,places.formattedAddress,"
                     "places.location,places.rating,places.userRatingCount,"
                     "places.priceLevel,places.businessStatus,places.types,"
-                    "places.primaryType,places.photos,places.openingHours,"
+                    "places.primaryType,places.photos,places.regularOpeningHours,"
                     "places.nationalPhoneNumber,places.websiteUri"),
                 json=body, timeout=self._timeout)
+            if resp.status_code in (401, 403):
+                self._google_dead_until = time.time() + _GOOGLE_DEAD_GRACE_S
             resp.raise_for_status()
             data = resp.json()
             seen = set()
@@ -182,17 +215,19 @@ class GoogleMapsClient:
                 out.append(self._to_place_dict(p, query))
         except (requests.RequestException, ValueError) as exc:
             logger.warning("[maps] search_places(%s) failed: %s", query, exc)
+        if not out:
+            out = self._osm_places(query, lat, lng, radius_m)
         self._store(key, list(out))
         return out
 
     def nearby_places(self, lat: float, lng: float, radius_m: int, category: str) -> list[dict]:
-        """Nearby Search (New) for a category keyword. Verified + deduped."""
+        """Nearby Search (New) -> OSM Nominatim fallback. Verified + deduped."""
         key = f"nearby:{round(lat,4)}:{round(lng,4)}:{radius_m}:{category.lower()}"
         cached = self._cached(key)
         if cached is not None:
             return list(cached)
-        if not self._key:
-            return []
+        if not self._key or time.time() < self._google_dead_until:
+            return self._osm_nearby(lat, lng, radius_m, category)
         body = {
             "locationRestriction": {
                 "circle": {"center": {"latitude": lat, "longitude": lng}, "radius": radius_m}
@@ -209,9 +244,11 @@ class GoogleMapsClient:
                     "places.id,places.displayName,places.formattedAddress,"
                     "places.location,places.rating,places.userRatingCount,"
                     "places.priceLevel,places.businessStatus,places.types,"
-                    "places.primaryType,places.photos,places.openingHours,"
+                    "places.primaryType,places.photos,places.regularOpeningHours,"
                     "places.dist"),
                 json=body, timeout=self._timeout)
+            if resp.status_code in (401, 403):
+                self._google_dead_until = time.time() + _GOOGLE_DEAD_GRACE_S
             resp.raise_for_status()
             data = resp.json()
             seen = set()
@@ -229,8 +266,68 @@ class GoogleMapsClient:
                 out.append(d)
         except (requests.RequestException, ValueError) as exc:
             logger.warning("[maps] nearby_places(%s) failed: %s", category, exc)
+        if not out:
+            out = self._osm_nearby(lat, lng, radius_m, category)
         self._store(key, list(out))
         return out
+
+    # --------------------------------------------------------------- OSM (fallback)
+    def _osm_places(self, query: str, lat: float | None, lng: float | None, radius_m: int) -> list[dict]:
+        """OpenStreetMap Nominatim search -> same place-dict shape. Real POIs."""
+        params = {
+            "q": query,
+            "format": "jsonv2",
+            "limit": 8,
+            "addressdetails": 1,
+            "accept-language": "en",
+        }
+        if lat is None or lng is None:
+            lat, lng = self._center
+        if lat is not None and lng is not None:
+            # bound results to a box around the reference point
+            deg_lat = radius_m / 111320.0
+            deg_lng = radius_m / (111320.0 * max(0.1, math.cos(math.radians(lat))))
+            params["viewbox"] = f"{lng - deg_lng},{lat + deg_lat},{lng + deg_lng},{lat - deg_lat}"
+            params["bounded"] = 1
+        try:
+            resp = requests.get(
+                _OSM_SEARCH, params=params,
+                headers={"User-Agent": "VOYAGER-v2/0.3 (college transit project)"},
+                timeout=6.0)
+            resp.raise_for_status()
+            return [self._to_osm_place_dict(r, query) for r in resp.json()]
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning("[osm] search(%s) failed: %s", query, exc)
+            return []
+
+    def _osm_nearby(self, lat: float, lng: float, radius_m: int, category: str) -> list[dict]:
+        """OpenStreetMap Nominatim category search around a point."""
+        q = category or "nearby"
+        out = self._osm_places(q, lat, lng, radius_m)
+        for d in out:
+            d["distance_km"] = round(_haversine_km(lat, lng, d["lat"], d["lng"]), 2)
+        return out
+
+    @staticmethod
+    def _to_osm_place_dict(r: dict, query: str) -> dict:
+        return {
+            "place_id": f"osm:{r.get('osm_type', 'n')}{r.get('osm_id', '')}",
+            "name": r.get("name") or r.get("display_name", "").split(",")[0],
+            "address": r.get("display_name", ""),
+            "lat": float(r.get("lat", 0.0)),
+            "lng": float(r.get("lon", 0.0)),
+            "rating": None,
+            "user_rating_count": None,
+            "price_level": None,
+            "business_status": None,
+            "open_now": None,
+            "weekday_hours": [],
+            "types": [r.get("type", "")] if r.get("type") else [],
+            "photo_name": None,
+            "distance_km": None,
+            "primary_type": r.get("type") or r.get("class") or None,
+            "query": query,
+        }
 
     def place_details(self, place_id: str) -> dict | None:
         """Place Details (New) -> enriched dict incl. hours/status/phone/website."""
@@ -245,8 +342,9 @@ class GoogleMapsClient:
                 f"{_PLACES_BASE}/places/{place_id}",
                 headers=self._headers_with_mask(
                     "id,displayName,formattedAddress,location,rating,userRatingCount,"
-                    "priceLevel,businessStatus,types,primaryType,photos,openingHours,"
-                    "nationalPhoneNumber,websiteUri,reviews,currentOpeningHours"),
+                    "priceLevel,businessStatus,types,primaryType,photos,"
+                    "regularOpeningHours,currentOpeningHours,"
+                    "nationalPhoneNumber,websiteUri,reviews"),
                 timeout=self._timeout)
             resp.raise_for_status()
             d = self._to_place_dict(resp.json(), "")
@@ -333,7 +431,7 @@ class GoogleMapsClient:
         loc = p.get("location", {})
         photos = p.get("photos", []) or []
         photo = photos[0].get("name") if photos else None
-        hours = p.get("openingHours") or p.get("currentOpeningHours") or {}
+        hours = p.get("openingHours") or p.get("currentOpeningHours") or p.get("regularOpeningHours") or {}
         types = p.get("types", [])
         return {
             "place_id": p.get("id", ""),

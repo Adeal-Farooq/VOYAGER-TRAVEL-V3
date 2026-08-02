@@ -4,8 +4,21 @@
 
 .inputs { position: relative; display: flex; flex-direction: column; gap: 4px; }
 .auto { position: relative; display: flex; align-items: center; gap: 8px; }
+.auto .text-input { flex: 1; padding-right: 40px; }
 .auto-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 8px currentColor; }
 .auto .suggest { position: absolute; top: 46px; left: 24px; right: 0; z-index: 30; }
+
+.locate-btn {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel-strong); border: 1px solid var(--panel-border);
+  color: var(--primary);
+  transition: transform 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.locate-btn:hover { transform: translateY(-50%) scale(1.1); border-color: var(--primary); }
+.locate-btn:active { transform: translateY(-50%) scale(0.95); }
 .swap-row { display: flex; align-items: center; height: 12px; position: relative; }
 .connector { flex: 1; border-top: 2px dashed var(--panel-border); }
 .swap-btn { position: absolute; left: 50%; transform: translateX(-50%); width: 32px; height: 32px; border-radius: 50%; background: var(--panel-strong); border: 1px solid var(--panel-border); display: flex; align-items: center; justify-content: center; }

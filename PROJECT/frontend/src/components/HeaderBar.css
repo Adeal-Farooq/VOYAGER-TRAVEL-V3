@@ -28,8 +28,20 @@
 
 .header-right .weather { gap: 4px; }
 .weather .temp { font-weight: 700; font-size: 15px; }
-.loc { max-width: 180px; }
-.loc .muted { font-size: 13px; }
+.loc-name { max-width: 180px; font-size: 13px; }
+
+.loc-btn {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel-strong);
+  border: 1px solid var(--panel-border);
+  color: var(--primary);
+  transition: transform 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.loc-btn:hover { transform: scale(1.08); border-color: var(--primary); }
+.loc-btn:active { transform: scale(0.95); }
 
 .dark-toggle {
   width: 36px; height: 36px;
@@ -54,5 +66,5 @@
 
 @media (max-width: 768px) {
   .header-bar { flex-wrap: wrap; }
-  .loc { display: none; }
+  .loc-name { display: none; }
 }

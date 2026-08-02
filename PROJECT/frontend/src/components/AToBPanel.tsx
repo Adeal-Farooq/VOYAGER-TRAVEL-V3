@@ -18,6 +18,13 @@ function Autocomplete({ label, color, value, onPick }: {
 
   useEffect(() => { setQ(value); }, [value]);
 
+  const pickCurrentLocation = () => {
+    if (!userLoc) return;
+    onPick(userLoc.name ?? "Current location", userLoc);
+    setQ(userLoc.name ?? "Current location");
+    setSugg([]);
+  };
+
   useEffect(() => {
     if (q.trim().length < 2) { setSugg([]); return; }
     const id = setTimeout(async () => {
@@ -38,6 +45,9 @@ function Autocomplete({ label, color, value, onPick }: {
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
+      <button className="locate-btn" onClick={pickCurrentLocation} title="Use current location">
+        <span className="material-symbols-outlined">my_location</span>
+      </button>
       {sugg.length > 0 && (
         <div className="suggest glass-strong">
           <button className="suggest-item" onClick={() => {

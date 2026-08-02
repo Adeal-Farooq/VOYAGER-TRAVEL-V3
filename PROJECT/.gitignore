@@ -36,7 +36,7 @@ Thumbs.db
 # ML artifacts
 ml/models/
 
-# GraphHopper — commit config.yml only; PBF + generated graph are huge
-gh-data/*.osm.pbf
+# GraphHopper — commit the Bangalore PBF (42MB, needed by config.yml);
+# generated graph-cache + logs stay out of git (auto-rebuilt on first boot)
 gh-data/graph-cache/
 gh-data/logs/
