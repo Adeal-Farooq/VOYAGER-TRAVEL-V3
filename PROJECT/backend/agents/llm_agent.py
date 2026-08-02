@@ -86,6 +86,7 @@ class LLMAgent:
         resp = client.chat.completions.create(
             model=model,
             temperature=self._cfg.temperature,
+            max_tokens=768,
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             timeout=self._cfg.timeout_s,

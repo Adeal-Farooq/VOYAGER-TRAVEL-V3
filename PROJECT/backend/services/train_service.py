@@ -108,8 +108,18 @@ class TrainService:
         self._cache: dict[str, tuple[float, dict | None]] = {}
 
     def code_for(self, station_name: str) -> str | None:
-        """Resolve a station name to its eRail code (name matching incl. tokens)."""
+        """Resolve a station name OR code to its eRail code.
+
+        Accepts full names ("KSR Bengaluru City Junction"), partial names
+        ("Mysuru") and already-resolved codes ("SBC", "YPR") so both the tests
+        and the live-trains API route (which passes codes) work.
+        """
         name = station_name.strip().lower()
+        if not name:
+            return None
+        upper = station_name.strip().upper()
+        if upper in {c for c in STATION_CODES.values()}:  # already a code
+            return upper
         if name in {k.lower() for k in STATION_CODES}:
             return STATION_CODES[next(k for k in STATION_CODES if k.lower() == name)]
         for k, code in STATION_CODES.items():

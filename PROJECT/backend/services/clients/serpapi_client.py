@@ -71,7 +71,24 @@ class SerpAPIClient:
             return cached
         data = self._get({"engine": "google_maps", "q": query, "type": "search"})
         out = None
-        if data and data.get("local_results"):
+        if not data:
+            self._store(key, out, _REVIEW_CACHE_S)
+            return out
+        # SerpAPI returns `place_results` (dict) for a specific place search and
+        # `local_results` (list) for a category search — support both shapes.
+        if data.get("place_results") and isinstance(data["place_results"], dict):
+            pr = data["place_results"]
+            gps = pr.get("gps_coordinates") or {}
+            out = {
+                "place_id": pr.get("place_id"),
+                "title": pr.get("title"),
+                "address": pr.get("address"),
+                "lat": gps.get("latitude"),
+                "lng": gps.get("longitude"),
+                "rating": pr.get("rating"),
+                "reviews": pr.get("reviews"),
+            }
+        elif data.get("local_results"):
             first = data["local_results"][0]
             out = {
                 "place_id": first.get("place_id"),

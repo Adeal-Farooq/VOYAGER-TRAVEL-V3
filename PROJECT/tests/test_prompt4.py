@@ -19,7 +19,9 @@ from backend.services.data_schema import (
 )
 from backend.services.reliability import compute_reliability, pin_class_of
 from backend.services.ride_pricing import (
+    coord_to_str,
     estimate_ride_prices,
+    fetch_live_prices,
     merge_live_prices,
     ride_prices_for_distance,
 )
@@ -232,3 +234,53 @@ class TestRidePricing:
         # surge should never produce zero/negative totals
         prices = estimate_ride_prices(dist_km=0.5, group_size=1)
         assert all(p.total > 0 for p in prices)
+
+
+class TestLivePriceFetch:
+    def test_coord_to_str(self):
+        assert coord_to_str((12.9716, 77.5946)) == "12.97160,77.59460"
+
+    def test_fetch_live_prices_returns_none_without_client(self):
+        live, km = fetch_live_prices(None, (12.97, 77.59), (13.0, 77.6))
+        assert live is None and km == 0.0
+
+    def test_fetch_live_prices_uses_real_data(self):
+        class FakeSerp:
+            def directions(self, origin, dest):
+                return {
+                    "distance_m": 5000,
+                    "ride_options": [{"provider": "Uber", "price": "₹200", "duration": 12}],
+                }
+        live, km = fetch_live_prices(FakeSerp(), (12.97, 77.59), (13.0, 77.6))
+        assert km == 5.0
+        assert live == [{"provider": "Uber", "price": "₹200", "duration": 12}]
+
+    def test_fetch_live_prices_returns_none_on_empty(self):
+        class FakeSerp:
+            def directions(self, origin, dest):
+                return {"distance_m": 5000, "ride_options": []}
+        live, km = fetch_live_prices(FakeSerp(), (12.97, 77.59), (13.0, 77.6))
+        assert live is None and km == 5.0
+
+    def test_search_service_wiring_passes_live(self):
+        # ride_prices() must pass live_options (not None) into the pricing ladder
+        from backend.services.search_service import SearchService
+        from backend.services.clients.google_maps_client import GoogleMapsClient
+
+        class FakeSerp:
+            def directions(self, origin, dest):
+                return {
+                    "distance_m": 8000,
+                    "ride_options": [{"provider": "Uber", "price": "₹150", "duration": 10}],
+                }
+        class FakeMaps(GoogleMapsClient):
+            def __init__(self):
+                pass
+            def directions(self, origin, dest, mode="driving"):
+                return {"distance_m": 8000}
+        svc = SearchService(FakeMaps(), FakeSerp())
+        prices = svc.ride_prices((12.97, 77.59), (13.0, 77.6), group_size=1)
+        uber = next(p for p in prices if p.provider == "Uber")
+        assert uber.source == "live"
+        assert uber.total == 150.0
+        assert any(p.source == "estimated" for p in prices)

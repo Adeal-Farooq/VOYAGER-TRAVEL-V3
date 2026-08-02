@@ -13,7 +13,7 @@ from .clients.google_maps_client import GoogleMapsClient
 from .clients.serpapi_client import SerpAPIClient
 from .data_schema import Place, RidePrice
 from .review_tools import ReviewTools
-from .ride_pricing import ride_prices_for_distance
+from .ride_pricing import fetch_live_prices, ride_prices_for_distance
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +56,12 @@ class SearchService:
                     group_size: int = 1) -> list[RidePrice]:
         """Live (SerpAPI) ride prices overlaid on Karnataka estimates."""
         dist_km = 0.0
-        live = None
         direction = self.maps.directions(origin, dest, mode="driving")
         if direction and direction.get("distance_m"):
             dist_km = direction["distance_m"] / 1000.0
+        live, live_km = fetch_live_prices(self.serpapi, origin, dest)
+        if not dist_km and live_km:
+            dist_km = live_km
         return ride_prices_for_distance(dist_km, group_size=group_size, live_options=live)
 
     def suggestions(self, query: str, lat: float | None = None, lng: float | None = None) -> list[dict]:

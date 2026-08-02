@@ -110,3 +110,26 @@ def ride_prices_for_distance(
     """Full pricing ladder: live prices overlaid on Karnataka estimates."""
     estimated = estimate_ride_prices(dist_km, group_size, context)
     return merge_live_prices(live_options, estimated, group_size)
+
+
+def coord_to_str(coord: tuple[float, float]) -> str:
+    """Format a (lat, lng) pair for SerpAPI's directions q/destination params."""
+    return f"{coord[0]:.5f},{coord[1]:.5f}"
+
+
+def fetch_live_prices(serpapi, origin: tuple[float, float],
+                      dest: tuple[float, float]) -> tuple[list[dict] | None, float]:
+    """Best-effort live ride options + distance from SerpAPI directions.
+
+    Returns (live_options, dist_km). Both are empty/0 when SerpAPI is down or
+    has no price data — callers fall back to the Karnataka estimate ladder.
+    Never fabricates: only what SerpAPI actually returned is used.
+    """
+    if not serpapi:
+        return None, 0.0
+    data = serpapi.directions(coord_to_str(origin), coord_to_str(dest))
+    if not data:
+        return None, 0.0
+    options = data.get("ride_options") or []
+    dist_km = (data.get("distance_m") or 0) / 1000.0
+    return (options or None), dist_km
